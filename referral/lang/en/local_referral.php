@@ -1,0 +1,48 @@
+<?php
+// /local/referral/lang/en/local_referral.php
+defined('MOODLE_INTERNAL') || die();
+
+$string['pluginname'] = 'Referral';
+$string['manage'] = 'Manage marketers';
+$string['report'] = 'Referral report';
+$string['dashboard'] = 'Marketer dashboard';
+$string['addmarketer'] = 'Add marketer';
+$string['editmarketer'] = 'Edit marketer';
+$string['code'] = 'Code';
+$string['name'] = 'Name';
+$string['user'] = 'User';
+$string['actions'] = 'Actions';
+$string['referrallink'] = 'Referral link';
+$string['save'] = 'Save';
+$string['delete'] = 'Delete';
+$string['filter'] = 'Filter';
+$string['approve'] = 'Approve';
+$string['markpaid'] = 'Mark paid';
+$string['confirmdelete'] = 'Are you sure you want to delete this marketer?';
+$string['reporttitle'] = 'Referral report';
+$string['userscount'] = 'Users referred';
+$string['marketeruserid'] = 'Marketer user ID';
+$string['marketeruseriddesc'] = 'Optional. Set a Moodle user ID so the marketer can access the dashboard.';
+$string['commissionpercentage'] = 'Commission percentage';
+$string['amount'] = 'Amount';
+$string['commission'] = 'Commission';
+$string['commissionrecords'] = 'Commission records';
+$string['status'] = 'Status';
+$string['createdat'] = 'Created at';
+$string['statusfilter'] = 'Status filter';
+$string['statusall'] = 'All';
+$string['statuspending'] = 'Pending';
+$string['statusapproved'] = 'Approved';
+$string['statuspaid'] = 'Paid';
+$string['totalreferredusers'] = 'Total referred users';
+$string['totalcommissions'] = 'Total commissions';
+$string['pendingcommissions'] = 'Pending commissions';
+$string['paidcommissions'] = 'Paid commissions';
+$string['marketernotlinked'] = 'No marketer profile is linked to your user account.';
+$string['nocommissions'] = 'No commission records found.';
+$string['errorcoderequired'] = 'Referral code is required.';
+$string['errornamerequired'] = 'Marketer name is required.';
+$string['errorcodeexists'] = 'Referral code already exists.';
+$string['errorinvalidcommission'] = 'Commission percentage must be between 0 and 100.';
+$string['errorinvaliduserid'] = 'Marketer user ID is invalid.';
+$string['erroruserlinked'] = 'This user is already linked to another marketer.';

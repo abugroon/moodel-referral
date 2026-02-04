@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!-- /local/referral/db/install.xml -->
+<XMLDB PATH="local/referral/db" VERSION="2026020400" COMMENT="Referral plugin tables">
+    <TABLES>
+        <TABLE NAME="local_ref_marketers" COMMENT="Referral marketers">
+            <FIELDS>
+                <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true" COMMENT="Primary key"/>
+                <FIELD NAME="code" TYPE="char" LENGTH="64" NOTNULL="true" COMMENT="Referral code"/>
+                <FIELD NAME="name" TYPE="char" LENGTH="255" NOTNULL="true" COMMENT="Display name"/>
+                <FIELD NAME="userid" TYPE="int" LENGTH="10" NOTNULL="false" COMMENT="Linked marketer user ID"/>
+                <FIELD NAME="commission_percentage" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="10" COMMENT="Commission percentage"/>
+                <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true" COMMENT="Created at"/>
+                <FIELD NAME="timemodified" TYPE="int" LENGTH="10" NOTNULL="true" COMMENT="Modified at"/>
+            </FIELDS>
+            <KEYS>
+                <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+            </KEYS>
+            <INDEXES>
+                <INDEX NAME="code_uix" UNIQUE="true" FIELDS="code"/>
+                <INDEX NAME="userid_uix" UNIQUE="true" FIELDS="userid"/>
+            </INDEXES>
+        </TABLE>
+
+        <TABLE NAME="local_ref_users" COMMENT="User to marketer referrals">
+            <FIELDS>
+                <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true" COMMENT="Primary key"/>
+                <FIELD NAME="userid" TYPE="int" LENGTH="10" NOTNULL="true" COMMENT="User ID"/>
+                <FIELD NAME="marketerid" TYPE="int" LENGTH="10" NOTNULL="true" COMMENT="Marketer ID"/>
+                <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true" COMMENT="Created at"/>
+            </FIELDS>
+            <KEYS>
+                <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+            </KEYS>
+            <INDEXES>
+                <INDEX NAME="userid_uix" UNIQUE="true" FIELDS="userid"/>
+                <INDEX NAME="marketer_idx" UNIQUE="false" FIELDS="marketerid"/>
+            </INDEXES>
+        </TABLE>
+
+        <TABLE NAME="local_ref_commissions" COMMENT="Referral commissions">
+            <FIELDS>
+                <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true" COMMENT="Primary key"/>
+                <FIELD NAME="marketerid" TYPE="int" LENGTH="10" NOTNULL="true" COMMENT="Marketer ID"/>
+                <FIELD NAME="userid" TYPE="int" LENGTH="10" NOTNULL="true" COMMENT="Referred user ID"/>
+                <FIELD NAME="courseid" TYPE="int" LENGTH="10" NOTNULL="true" COMMENT="Course ID"/>
+                <FIELD NAME="amount" TYPE="number" LENGTH="10" DECIMALS="2" NOTNULL="true" DEFAULT="0" COMMENT="Paid amount"/>
+                <FIELD NAME="commission" TYPE="number" LENGTH="10" DECIMALS="2" NOTNULL="true" DEFAULT="0" COMMENT="Commission value"/>
+                <FIELD NAME="status" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0" COMMENT="0=pending,1=approved,2=paid"/>
+                <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true" COMMENT="Created at"/>
+            </FIELDS>
+            <KEYS>
+                <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+            </KEYS>
+            <INDEXES>
+                <INDEX NAME="marketer_idx" UNIQUE="false" FIELDS="marketerid"/>
+                <INDEX NAME="userid_idx" UNIQUE="false" FIELDS="userid"/>
+                <INDEX NAME="courseid_idx" UNIQUE="false" FIELDS="courseid"/>
+                <INDEX NAME="usercourse_uix" UNIQUE="true" FIELDS="userid, courseid"/>
+            </INDEXES>
+        </TABLE>
+    </TABLES>
+</XMLDB>
