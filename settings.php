@@ -14,6 +14,14 @@ if ($hassiteconfig) {
         )
     );
 
+    $admin_page = new admin_externalpage(
+        'local_referral_payments', // يجب أن يطابق الاسم الموجود في صفحتك
+        'توزيع العمولات',             // العنوان الذي سيظهر في القائمة
+        new moodle_url('/local/referral/payments.php') // المسار الصحيح لملفك
+    );
+
+    // إضافة الصفحة إلى قائمة الإدارة (مثلاً داخل قائمة التقارير أو قسم خاص)
+    $ADMIN->add('reports', $admin_page);
     $ADMIN->add('local_referral',
         new admin_externalpage('local_referral_report',
             get_string('report', 'local_referral'),

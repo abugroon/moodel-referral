@@ -64,5 +64,30 @@ function xmldb_local_referral_upgrade($oldversion)
         upgrade_plugin_savepoint(true, 2026020400, 'local', 'referral');
     }
 
+    // =============================================
+    // الإصدار الجديد: إضافة جدول طلبات السحب
+    // =============================================
+    if ($oldversion < 2026040100) {
+
+        $withdrawalstable = new xmldb_table('local_ref_withdrawals');
+        if (!$dbman->table_exists($withdrawalstable)) {
+            $withdrawalstable->add_field('id',           XMLDB_TYPE_INTEGER, '10',    null, XMLDB_NOTNULL, XMLDB_SEQUENCE, null);
+            $withdrawalstable->add_field('marketerid',   XMLDB_TYPE_INTEGER, '10',    null, XMLDB_NOTNULL, null,           null);
+            $withdrawalstable->add_field('amount',       XMLDB_TYPE_NUMBER,  '10,2',  null, XMLDB_NOTNULL, null,           '0.00');
+            $withdrawalstable->add_field('status',       XMLDB_TYPE_INTEGER, '10',    null, XMLDB_NOTNULL, null,           '0');
+            $withdrawalstable->add_field('notes',        XMLDB_TYPE_TEXT,    null,    null, null,           null,           null);
+            $withdrawalstable->add_field('timecreated',  XMLDB_TYPE_INTEGER, '10',    null, XMLDB_NOTNULL, null,           null);
+            $withdrawalstable->add_field('timemodified', XMLDB_TYPE_INTEGER, '10',    null, XMLDB_NOTNULL, null,           null);
+
+            $withdrawalstable->add_key('primary',       XMLDB_KEY_PRIMARY,  ['id']);
+            $withdrawalstable->add_index('marketer_idx', XMLDB_INDEX_NOTUNIQUE, ['marketerid']);
+            $withdrawalstable->add_index('status_idx',   XMLDB_INDEX_NOTUNIQUE, ['status']);
+
+            $dbman->create_table($withdrawalstable);
+        }
+
+        upgrade_plugin_savepoint(true, 2026040100, 'local', 'referral');
+    }
+
     return true;
 }

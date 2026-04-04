@@ -58,5 +58,23 @@
                 <INDEX NAME="usercourse_uix" UNIQUE="true" FIELDS="userid, courseid"/>
             </INDEXES>
         </TABLE>
+        <TABLE NAME="local_ref_withdrawals" COMMENT="Marketer withdrawal requests">
+            <FIELDS>
+                <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true" COMMENT="Primary key"/>
+                <FIELD NAME="marketerid" TYPE="int" LENGTH="10" NOTNULL="true" COMMENT="Marketer ID"/>
+                <FIELD NAME="amount" TYPE="number" LENGTH="10" DECIMALS="2" NOTNULL="true" DEFAULT="0" COMMENT="Requested amount"/>
+                <FIELD NAME="status" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0" COMMENT="0=pending,1=done,2=rejected"/>
+                <FIELD NAME="notes" TYPE="text" NOTNULL="false" COMMENT="Admin notes"/>
+                <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true" COMMENT="Created at"/>
+                <FIELD NAME="timemodified" TYPE="int" LENGTH="10" NOTNULL="true" COMMENT="Modified at"/>
+            </FIELDS>
+            <KEYS>
+                <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+            </KEYS>
+            <INDEXES>
+                <INDEX NAME="marketer_idx" UNIQUE="false" FIELDS="marketerid"/>
+                <INDEX NAME="status_idx" UNIQUE="false" FIELDS="status"/>
+            </INDEXES>
+        </TABLE>
     </TABLES>
 </XMLDB>
