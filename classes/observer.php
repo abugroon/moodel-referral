@@ -128,10 +128,10 @@ class observer {
         }
 
         /* ===============================
-           Parent Commission (From Child Commission)
+           Parent Commission (From Total Amount)
         ================================ */
 
-        if (!empty($marketer->parent_id) && $commission > 0) {
+        if (!empty($marketer->parent_id) && $amount > 0) {
 
             $parent = $DB->get_record(
                 'local_ref_marketers',
@@ -152,14 +152,14 @@ class observer {
 
                     $parentPercentage = max(0, min(100, (int)$parent->commission_percentage));
 
-                    // 🔥 التعديل هنا — من عمولة الفرعي وليس من قيمة الكورس
-                    $parentCommission = round(($commission * $parentPercentage) / 100, 2);
+                    // من المبلغ الكلي وليس من عمولة الفرعي
+                    $parentCommission = round(($amount * $parentPercentage) / 100, 2);
 
                     $DB->insert_record('local_ref_commissions', (object)[
                         'marketerid' => $parent->id,
                         'userid' => $userid,
                         'courseid' => $courseid,
-                        'amount' => $commission, // مصدر الحساب
+                        'amount' => $amount, // المبلغ الكلي
                         'commission' => $parentCommission,
                         'status' => 0,
                         'timecreated' => time(),
