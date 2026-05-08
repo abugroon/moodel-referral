@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git *)",
+      "Bash(findstr /n \"disbursement_manager\\\\|pluginfile\\\\|local_ref_disbursements\" \"D:\\\\LocalServer\\\\moodel-referral\\\\lib.php\" \"D:\\\\LocalServer\\\\moodel-referral\\\\payments.php\" \"D:\\\\LocalServer\\\\moodel-referral\\\\db\\\\upgrade.php\")",
+      "Bash(Select-String -Path \"D:\\\\LocalServer\\\\moodel-referral\\\\lib.php\",\"D:\\\\LocalServer\\\\moodel-referral\\\\payments.php\",\"D:\\\\LocalServer\\\\moodel-referral\\\\db\\\\upgrade.php\" -Pattern \"disbursement_manager|pluginfile|local_ref_disbursements\")",
+      "Bash(Select-Object Filename,LineNumber,Line)"
+    ]
+  }
+}

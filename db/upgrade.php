@@ -89,5 +89,39 @@ function xmldb_local_referral_upgrade($oldversion)
         upgrade_plugin_savepoint(true, 2026040100, 'local', 'referral');
     }
 
+    if ($oldversion < 2026050801) {
+
+        // Add parent_id to local_ref_marketers.
+        $marketerstable = new xmldb_table('local_ref_marketers');
+        $parentfield = new xmldb_field('parent_id', XMLDB_TYPE_INTEGER, '10', null, null, null, null, 'userid');
+        if (!$dbman->field_exists($marketerstable, $parentfield)) {
+            $dbman->add_field($marketerstable, $parentfield);
+        }
+
+        // Create local_ref_disbursements table.
+        $disbtable = new xmldb_table('local_ref_disbursements');
+        if (!$dbman->table_exists($disbtable)) {
+            $disbtable->add_field('id',             XMLDB_TYPE_INTEGER, '10',   null, XMLDB_NOTNULL, XMLDB_SEQUENCE, null);
+            $disbtable->add_field('category',       XMLDB_TYPE_CHAR,    '64',   null, XMLDB_NOTNULL, null,           null);
+            $disbtable->add_field('recipient_name', XMLDB_TYPE_CHAR,    '255',  null, XMLDB_NOTNULL, null,           null);
+            $disbtable->add_field('amount',         XMLDB_TYPE_NUMBER,  '10,2', null, XMLDB_NOTNULL, null,           '0.00');
+            $disbtable->add_field('period_start',   XMLDB_TYPE_INTEGER, '10',   null, XMLDB_NOTNULL, null,           null);
+            $disbtable->add_field('period_end',     XMLDB_TYPE_INTEGER, '10',   null, XMLDB_NOTNULL, null,           null);
+            $disbtable->add_field('receipt_file',   XMLDB_TYPE_CHAR,    '255',  null, null,           null,           null);
+            $disbtable->add_field('notes',          XMLDB_TYPE_TEXT,    null,   null, null,           null,           null);
+            $disbtable->add_field('created_by',     XMLDB_TYPE_INTEGER, '10',   null, XMLDB_NOTNULL, null,           null);
+            $disbtable->add_field('timecreated',    XMLDB_TYPE_INTEGER, '10',   null, XMLDB_NOTNULL, null,           null);
+
+            $disbtable->add_key('primary', XMLDB_KEY_PRIMARY, ['id']);
+            $disbtable->add_index('category_idx',   XMLDB_INDEX_NOTUNIQUE, ['category']);
+            $disbtable->add_index('period_idx',     XMLDB_INDEX_NOTUNIQUE, ['period_start', 'period_end']);
+            $disbtable->add_index('created_by_idx', XMLDB_INDEX_NOTUNIQUE, ['created_by']);
+
+            $dbman->create_table($disbtable);
+        }
+
+        upgrade_plugin_savepoint(true, 2026050801, 'local', 'referral');
+    }
+
     return true;
 }

@@ -21,3 +21,20 @@ function local_referral_before_http_headers() {
 
     setcookie('referral_code', $ref, $expire, $path, $domain, $secure, $httponly);
 }
+
+function local_referral_pluginfile($course, $cm, $context, $filearea, $args, $forcedownload, array $options = []) {
+    require_login();
+    require_capability('moodle/site:config', context_system::instance());
+    if ($filearea !== 'disbursement_receipts') {
+        return false;
+    }
+    $itemid  = (int)array_shift($args);
+    $filename = array_pop($args);
+    $filepath = $args ? ('/' . implode('/', $args) . '/') : '/';
+    $fs   = get_file_storage();
+    $file = $fs->get_file($context->id, 'local_referral', $filearea, $itemid, $filepath, $filename);
+    if (!$file) {
+        return false;
+    }
+    send_stored_file($file, 0, 0, $forcedownload, $options);
+}
