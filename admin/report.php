@@ -29,10 +29,11 @@ $end_of_day = $end_ts + 86399;
 ================================================================ */
 $has_tc = $DB->get_manager()->table_exists('local_tc_transactions');
 
+// payments.itemid = enrol.id for component='enrol_fee'; enrol gives us courseid.
 if ($has_tc) {
     $tc_join   = "LEFT JOIN {local_tc_transactions} tc
                          ON tc.studentid = p.userid
-                        AND tc.courseid  = p.courseid
+                        AND tc.courseid  = e.courseid
                         AND tc.status    = 'paid'";
     $tc_select = "COALESCE(tc.commissionamount, 0) AS teacher_commission";
 } else {
@@ -42,6 +43,9 @@ if ($has_tc) {
 
 /* ================================================================
    Main query — all payment transactions in the date range.
+
+   payments has no courseid; for enrol_fee payments:
+     payments.itemid = enrol.id  →  enrol.courseid = course.id
 ================================================================ */
 $sql = "SELECT p.id,
                p.timecreated,
@@ -50,18 +54,20 @@ $sql = "SELECT p.id,
                p.gateway,
                u.firstname,
                u.lastname,
-               c.fullname   AS coursename,
-               COALESCE(m.name, 'Direct') AS marketer_name,
+               c.fullname AS coursename,
+               COALESCE(CONCAT(mu.firstname, ' ', mu.lastname), 'Direct') AS marketer_name,
                COALESCE(rc.commission, 0) AS marketer_commission,
                $tc_select
           FROM {payments} p
           JOIN {user}   u  ON u.id  = p.userid
-          JOIN {course} c  ON c.id  = p.courseid
-          LEFT JOIN {local_ref_users}      ru ON ru.userid    = p.userid
-          LEFT JOIN {local_ref_marketers}  m  ON m.id         = ru.marketerid
-          LEFT JOIN {local_ref_commissions} rc ON rc.userid   = p.userid
-                                              AND rc.courseid = p.courseid
-                                              AND rc.status   = 2
+          JOIN {enrol}  e  ON e.id  = p.itemid AND p.component = 'enrol_fee'
+          JOIN {course} c  ON c.id  = e.courseid
+          LEFT JOIN {local_ref_users}           ru ON ru.userid     = p.userid
+          LEFT JOIN {local_ref_marketer_profile} mp ON mp.userid    = ru.marketerid
+          LEFT JOIN {user}                       mu ON mu.id        = mp.userid
+          LEFT JOIN {local_ref_commissions}      rc ON rc.userid    = p.userid
+                                                   AND rc.courseid  = e.courseid
+                                                   AND rc.status    = 2
           $tc_join
          WHERE p.timecreated >= :start
            AND p.timecreated <= :end

@@ -15,8 +15,8 @@ $PAGE->set_heading('حسابي كمسوق');
 
 global $DB, $USER, $OUTPUT;
 
-// التحقق من وجود حساب مسوق مرتبط
-$marketer = $DB->get_record('local_ref_marketers', ['userid' => $USER->id]);
+// Check if this user has a marketer profile
+$marketer = $DB->get_record('local_ref_marketer_profile', ['userid' => $USER->id]);
 
 if (!$marketer) {
     echo $OUTPUT->header();
@@ -47,19 +47,19 @@ $min_withdrawal = (float)(get_config('local_referral', 'min_withdrawal') ?: 10);
 
 if ($requestwithdraw && confirm_sesskey()) {
 
-    // كل العمولات غير المدفوعة (انتظار + معتمدة) = ما يُحسب كرصيد متاح
+    // العمولات غير المدفوعة (انتظار + معتمدة) = الرصيد المتاح للسحب
     $available = (float)$DB->get_field_sql(
         "SELECT COALESCE(SUM(commission),0)
            FROM {local_ref_commissions}
           WHERE marketerid = :mid AND status IN (0, 1)",
-        ['mid' => $marketer->id]
+        ['mid' => $marketer->userid]
     );
 
     $pending_withdrawal = (float)$DB->get_field_sql(
         "SELECT COALESCE(SUM(amount),0)
            FROM {local_ref_withdrawals}
           WHERE marketerid = :mid AND status = 0",
-        ['mid' => $marketer->id]
+        ['mid' => $marketer->userid]
     );
 
     $net_available = $available - $pending_withdrawal;
@@ -72,7 +72,7 @@ if ($requestwithdraw && confirm_sesskey()) {
         $withdrawmsg = 'error:المبلغ المطلوب أكبر من رصيدك المتاح (' . number_format($net_available, 2) . ').';
     } else {
         $DB->insert_record('local_ref_withdrawals', (object)[
-            'marketerid'   => $marketer->id,
+            'marketerid'   => $marketer->userid,
             'amount'       => $withdrawamount,
             'status'       => 0,
             'timecreated'  => time(),
@@ -141,25 +141,25 @@ if ($requestwithdraw && confirm_sesskey()) {
 =========================== */
 $total_commission = (float)$DB->get_field_sql(
     "SELECT COALESCE(SUM(commission),0) FROM {local_ref_commissions} WHERE marketerid = :mid",
-    ['mid' => $marketer->id]
+    ['mid' => $marketer->userid]
 );
 $approved_commission = (float)$DB->get_field_sql(
     "SELECT COALESCE(SUM(commission),0) FROM {local_ref_commissions} WHERE marketerid = :mid AND status = 1",
-    ['mid' => $marketer->id]
+    ['mid' => $marketer->userid]
 );
 $paid_commission = (float)$DB->get_field_sql(
     "SELECT COALESCE(SUM(commission),0) FROM {local_ref_commissions} WHERE marketerid = :mid AND status = 2",
-    ['mid' => $marketer->id]
+    ['mid' => $marketer->userid]
 );
 $pending_withdrawal_total = (float)$DB->get_field_sql(
     "SELECT COALESCE(SUM(amount),0) FROM {local_ref_withdrawals} WHERE marketerid = :mid AND status = 0",
-    ['mid' => $marketer->id]
+    ['mid' => $marketer->userid]
 );
-// الرصيد القابل للسحب = كل العمولات غير المدفوعة (انتظار + معتمدة) ناقص طلبات السحب المعلقة
+// الرصيد القابل للسحب = كل العمولات غير المدفوعة ناقص طلبات السحب المعلقة
 $withdrawable_total = $total_commission - $paid_commission;
 $net_balance        = $withdrawable_total - $pending_withdrawal_total;
 
-$referred_count = $DB->count_records('local_ref_users', ['marketerid' => $marketer->id]);
+$referred_count = $DB->count_records('local_ref_users', ['marketerid' => $marketer->userid]);
 $refurl = (new moodle_url('/', ['ref' => $marketer->code]))->out(false);
 
 echo $OUTPUT->header();
@@ -546,7 +546,6 @@ echo $OUTPUT->header();
         <div class="mk-code-box">
             <div class="cb-lbl">كود الإحالة</div>
             <div class="cb-code"><?php echo s($marketer->code); ?></div>
-            <div class="cb-pct">&#x1F4CA; عمولة <?php echo (int)$marketer->commission_percentage; ?>%</div>
         </div>
     </div>
 
@@ -612,7 +611,7 @@ echo $OUTPUT->header();
                               JOIN {course} crs ON crs.id = c.courseid
                              WHERE c.marketerid = :mid
                           ORDER BY c.timecreated DESC";
-                    $commissions = $DB->get_records_sql($sql, ['mid' => $marketer->id]);
+                    $commissions = $DB->get_records_sql($sql, ['mid' => $marketer->userid]);
                     ?>
                     <?php if (empty($commissions)): ?>
                         <div class="empty-msg">
@@ -627,7 +626,6 @@ echo $OUTPUT->header();
                                     <tr>
                                         <th>المستخدم</th>
                                         <th>الكورس</th>
-                                        <th>قيمة الشراء</th>
                                         <th>عمولتي</th>
                                         <th>الحالة</th>
                                         <th>التاريخ</th>
@@ -648,7 +646,6 @@ echo $OUTPUT->header();
                                         <td style="color:var(--mk-muted);font-size:.83rem;max-width:180px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="<?php echo s($c->coursename); ?>">
                                             <?php echo s($c->coursename); ?>
                                         </td>
-                                        <td style="font-weight:600;color:#334155;"><?php echo number_format($c->amount, 2); ?></td>
                                         <td><span class="comm-amount"><?php echo number_format($c->commission, 2); ?></span></td>
                                         <td><span class="sbadge <?php echo $sclass; ?>"><?php echo $slabel; ?></span></td>
                                         <td style="color:#94a3b8;font-size:.78rem;white-space:nowrap;"><?php echo userdate($c->timecreated, '%d/%m/%Y'); ?></td>
@@ -740,7 +737,7 @@ echo $OUTPUT->header();
                 <div class="mk-panel-body" style="padding:0;">
                     <?php
                     $withdrawals = $DB->get_records('local_ref_withdrawals',
-                        ['marketerid' => $marketer->id], 'timecreated DESC', '*', 0, 10);
+                        ['marketerid' => $marketer->userid], 'timecreated DESC', '*', 0, 10);
                     if (empty($withdrawals)):
                     ?>
                         <div class="empty-msg">
@@ -754,21 +751,37 @@ echo $OUTPUT->header();
                                     <th>المبلغ</th>
                                     <th>الحالة</th>
                                     <th>التاريخ</th>
+                                    <th>الإيصال</th>
                                 </tr>
                             </thead>
                             <tbody>
-                            <?php foreach ($withdrawals as $wr):
+                            <?php
+                            $wr_ctx = context_system::instance();
+                            foreach ($withdrawals as $wr):
                                 $wr_data = [
                                     0 => ['&#x1F550; مراجعة', 'sb-pending'],
                                     1 => ['&#x2705; مدفوع',   'sb-approved'],
                                     2 => ['&#x274C; مرفوض',   'sb-rejected'],
                                 ];
                                 [$wrlabel, $wrcls] = $wr_data[$wr->status] ?? ['-', 'sb-pending'];
+                                $receipt_link = '';
+                                if (!empty($wr->receipt_file)) {
+                                    $receipt_url = moodle_url::make_pluginfile_url(
+                                        $wr_ctx->id, 'local_referral', 'withdrawal_receipts',
+                                        $wr->id, '/', $wr->receipt_file, true
+                                    );
+                                    $receipt_link = '<a href="' . $receipt_url->out(false) . '" target="_blank"
+                                        style="font-size:.78rem;font-weight:700;color:#2563eb;text-decoration:none;">
+                                        &#x1F4CE; تحميل</a>';
+                                } else {
+                                    $receipt_link = '<span style="color:#94a3b8;font-size:.78rem;">—</span>';
+                                }
                             ?>
                                 <tr>
                                     <td style="font-weight:800;color:#065f46;font-size:.95rem;"><?php echo number_format($wr->amount, 2); ?></td>
                                     <td><span class="sbadge <?php echo $wrcls; ?>"><?php echo $wrlabel; ?></span></td>
                                     <td style="color:#94a3b8;font-size:.78rem;"><?php echo userdate($wr->timecreated, '%d/%m/%Y'); ?></td>
+                                    <td><?php echo $receipt_link; ?></td>
                                 </tr>
                             <?php endforeach; ?>
                             </tbody>

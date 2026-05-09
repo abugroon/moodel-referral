@@ -15,8 +15,8 @@ $PAGE->set_heading('التسجيل كمسوق');
 
 global $DB, $USER, $OUTPUT;
 
-// هل هو مسجل مسوق أصلاً؟
-$existing = $DB->get_record('local_ref_marketers', ['userid' => $USER->id]);
+// Already a marketer?
+$existing = $DB->get_record('local_ref_marketer_profile', ['userid' => $USER->id]);
 if ($existing) {
     redirect(new moodle_url('/local/referral/myaccount.php'),
         'أنت مسجل مسوق بالفعل! سيتم توجيهك للوحة حسابك.', 2);
@@ -33,7 +33,7 @@ if ($save && confirm_sesskey()) {
         $errormsg = 'الكود مطلوب.';
     } elseif (strlen($refcode) < 4) {
         $errormsg = 'الكود يجب أن يكون 4 أحرف على الأقل.';
-    } elseif ($DB->record_exists('local_ref_marketers', ['code' => $refcode])) {
+    } elseif ($DB->record_exists('local_ref_marketer_profile', ['code' => $refcode])) {
         $errormsg = 'هذا الكود مستخدم مسبقاً، اختر كوداً آخر.';
     }
 
@@ -43,10 +43,9 @@ if ($save && confirm_sesskey()) {
         // نسبة العمولة الافتراضية من الإعدادات أو 10%
         $default_pct = (int)get_config('local_referral', 'default_commission_percentage') ?: 10;
 
-        $DB->insert_record('local_ref_marketers', (object)[
-            'code'                  => $refcode,
-            'name'                  => fullname($USER),
+        $DB->insert_record('local_ref_marketer_profile', (object)[
             'userid'                => $USER->id,
+            'code'                  => $refcode,
             'commission_percentage' => $default_pct,
             'timecreated'           => $now,
             'timemodified'          => $now,

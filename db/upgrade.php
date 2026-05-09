@@ -123,5 +123,136 @@ function xmldb_local_referral_upgrade($oldversion)
         upgrade_plugin_savepoint(true, 2026050801, 'local', 'referral');
     }
 
+    // =============================================
+    // Version: add parent_id to old marketers table
+    // =============================================
+    if ($oldversion < 2026040200) {
+        $table = new xmldb_table('local_ref_marketers');
+        $field = new xmldb_field('parent_id', XMLDB_TYPE_INTEGER, '10', null, null, null, null, 'userid');
+        if (!$dbman->field_exists($table, $field)) {
+            $dbman->add_field($table, $field);
+        }
+        upgrade_plugin_savepoint(true, 2026040200, 'local', 'referral');
+    }
+
+    // =============================================
+    // Version: replace local_ref_marketers with
+    //          local_ref_marketer_profile
+    //          marketerid in child tables now = userid
+    // =============================================
+    if ($oldversion < 2026040300) {
+
+        // 1. Create the new profile table if it does not exist
+        $new_table = new xmldb_table('local_ref_marketer_profile');
+        if (!$dbman->table_exists($new_table)) {
+            $new_table->add_field('id',                   XMLDB_TYPE_INTEGER, '10',   null, XMLDB_NOTNULL, XMLDB_SEQUENCE, null);
+            $new_table->add_field('userid',               XMLDB_TYPE_INTEGER, '10',   null, XMLDB_NOTNULL, null,           null);
+            $new_table->add_field('code',                 XMLDB_TYPE_CHAR,    '64',   null, XMLDB_NOTNULL, null,           null);
+            $new_table->add_field('commission_percentage',XMLDB_TYPE_INTEGER, '10',   null, XMLDB_NOTNULL, null,           '10');
+            $new_table->add_field('parent_userid',        XMLDB_TYPE_INTEGER, '10',   null, null,           null,           null);
+            $new_table->add_field('timecreated',          XMLDB_TYPE_INTEGER, '10',   null, XMLDB_NOTNULL, null,           null);
+            $new_table->add_field('timemodified',         XMLDB_TYPE_INTEGER, '10',   null, XMLDB_NOTNULL, null,           null);
+
+            $new_table->add_key('primary',     XMLDB_KEY_PRIMARY, ['id']);
+            $new_table->add_index('userid_uix', XMLDB_INDEX_UNIQUE,    ['userid']);
+            $new_table->add_index('code_uix',   XMLDB_INDEX_UNIQUE,    ['code']);
+
+            $dbman->create_table($new_table);
+        }
+
+        // 2. Migrate rows from old table — only rows that have a real userid
+        $old_table = new xmldb_table('local_ref_marketers');
+        if ($dbman->table_exists($old_table)) {
+            $old_rows = $DB->get_records_select(
+                'local_ref_marketers',
+                'userid IS NOT NULL',
+                [],
+                '',
+                'id, userid, code, commission_percentage, parent_id, timecreated, timemodified'
+            );
+
+            // Build a map: old marketer id -> user id (for parent lookup)
+            $id_to_userid = [];
+            foreach ($old_rows as $r) {
+                $id_to_userid[$r->id] = (int)$r->userid;
+            }
+
+            foreach ($old_rows as $r) {
+                if ($DB->record_exists('local_ref_marketer_profile', ['userid' => $r->userid])) {
+                    continue; // already migrated
+                }
+                $parent_userid = (!empty($r->parent_id) && isset($id_to_userid[$r->parent_id]))
+                    ? $id_to_userid[$r->parent_id]
+                    : null;
+
+                $DB->insert_record('local_ref_marketer_profile', (object)[
+                    'userid'                => (int)$r->userid,
+                    'code'                  => $r->code,
+                    'commission_percentage' => (int)$r->commission_percentage,
+                    'parent_userid'         => $parent_userid,
+                    'timecreated'           => (int)$r->timecreated,
+                    'timemodified'          => (int)$r->timemodified,
+                ]);
+            }
+
+            // 3. Update marketerid in child tables: old marketer id -> user id
+            foreach ($id_to_userid as $old_id => $uid) {
+                foreach (['local_ref_users', 'local_ref_commissions', 'local_ref_withdrawals'] as $tbl) {
+                    $DB->execute(
+                        "UPDATE {{$tbl}} SET marketerid = :uid WHERE marketerid = :old_id",
+                        ['uid' => $uid, 'old_id' => $old_id]
+                    );
+                }
+            }
+
+            // 4. Drop the old table
+            $dbman->drop_table($old_table);
+        }
+
+        upgrade_plugin_savepoint(true, 2026040300, 'local', 'referral');
+    }
+
+    if ($oldversion < 2026050901) {
+        $table = new xmldb_table('local_ref_withdrawals');
+        $field = new xmldb_field('receipt_file', XMLDB_TYPE_CHAR, '255', null, null, null, null, 'notes');
+        if (!$dbman->field_exists($table, $field)) {
+            $dbman->add_field($table, $field);
+        }
+        upgrade_plugin_savepoint(true, 2026050901, 'local', 'referral');
+    }
+
+    // Safety step: ensure local_ref_marketer_profile exists for sites that were
+    // freshly installed without it (install.xml previously had the old schema).
+    if ($oldversion < 2026050902) {
+        $profile_table = new xmldb_table('local_ref_marketer_profile');
+        if (!$dbman->table_exists($profile_table)) {
+            $profile_table->add_field('id',                    XMLDB_TYPE_INTEGER, '10',  null, XMLDB_NOTNULL, XMLDB_SEQUENCE, null);
+            $profile_table->add_field('userid',                XMLDB_TYPE_INTEGER, '10',  null, XMLDB_NOTNULL, null,           null);
+            $profile_table->add_field('code',                  XMLDB_TYPE_CHAR,    '64',  null, XMLDB_NOTNULL, null,           null);
+            $profile_table->add_field('commission_percentage', XMLDB_TYPE_INTEGER, '10',  null, XMLDB_NOTNULL, null,           '10');
+            $profile_table->add_field('parent_userid',         XMLDB_TYPE_INTEGER, '10',  null, null,           null,           null);
+            $profile_table->add_field('timecreated',           XMLDB_TYPE_INTEGER, '10',  null, XMLDB_NOTNULL, null,           null);
+            $profile_table->add_field('timemodified',          XMLDB_TYPE_INTEGER, '10',  null, XMLDB_NOTNULL, null,           null);
+
+            $profile_table->add_key('primary',    XMLDB_KEY_PRIMARY, ['id']);
+            $profile_table->add_index('userid_uix', XMLDB_INDEX_UNIQUE, ['userid']);
+            $profile_table->add_index('code_uix',   XMLDB_INDEX_UNIQUE, ['code']);
+
+            $dbman->create_table($profile_table);
+        }
+
+        // Also ensure local_ref_withdrawals.receipt_file exists
+        // (may have been skipped if site was at 2026050901 already but table was missing).
+        $wr_table = new xmldb_table('local_ref_withdrawals');
+        if ($dbman->table_exists($wr_table)) {
+            $rf_field = new xmldb_field('receipt_file', XMLDB_TYPE_CHAR, '255', null, null, null, null, 'notes');
+            if (!$dbman->field_exists($wr_table, $rf_field)) {
+                $dbman->add_field($wr_table, $rf_field);
+            }
+        }
+
+        upgrade_plugin_savepoint(true, 2026050902, 'local', 'referral');
+    }
+
     return true;
 }

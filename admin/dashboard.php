@@ -43,6 +43,21 @@ if (($commissionid || $withdrawalid) && $action && confirm_sesskey()) {
             $wr->status       = ($action == 'wdone') ? 1 : 2;
             $wr->timemodified = time();
             $DB->update_record('local_ref_withdrawals', $wr);
+            // عند الموافقة على السحب: تحديث العمولات المعتمدة كـ مدفوعة (FIFO)
+            if ($action == 'wdone') {
+                $remaining = (float)$wr->amount;
+                $comms = $DB->get_records_select(
+                    'local_ref_commissions',
+                    'marketerid = :mid AND status = 1',
+                    ['mid' => $wr->marketerid],
+                    'timecreated ASC'
+                );
+                foreach ($comms as $c) {
+                    if ($remaining <= 0) break;
+                    $DB->set_field('local_ref_commissions', 'status', 2, ['id' => $c->id]);
+                    $remaining -= (float)$c->commission;
+                }
+            }
         }
         redirect($base_url);
     }

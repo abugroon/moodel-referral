@@ -57,8 +57,8 @@ if ($action === 'setparent' && $marketerid && confirm_sesskey()) {
     if ($parentid == $marketerid) {
         redirect($base_url, 'لا يمكن ربط المسوق بنفسه.', 2);
     }
-    $DB->set_field('local_ref_marketers', 'parent_id',    $parentid ?: null, ['id' => $marketerid]);
-    $DB->set_field('local_ref_marketers', 'timemodified', $now,              ['id' => $marketerid]);
+    $DB->set_field('local_ref_marketer_profile', 'parent_userid', $parentid ?: null, ['userid' => $marketerid]);
+    $DB->set_field('local_ref_marketer_profile', 'timemodified',  $now,              ['userid' => $marketerid]);
     redirect($base_url, 'تم تحديث المسوق الأب.', 2);
 }
 
@@ -68,17 +68,61 @@ if ($action === 'setparent' && $marketerid && confirm_sesskey()) {
 if ($action === 'setcommission' && $marketerid && confirm_sesskey()) {
     $pct = optional_param('commission', 10, PARAM_INT);
     $pct = max(0, min(100, $pct));
-    $DB->set_field('local_ref_marketers', 'commission_percentage', $pct, ['id' => $marketerid]);
-    $DB->set_field('local_ref_marketers', 'timemodified', $now, ['id' => $marketerid]);
+    $DB->set_field('local_ref_marketer_profile', 'commission_percentage', $pct, ['userid' => $marketerid]);
+    $DB->set_field('local_ref_marketer_profile', 'timemodified', $now, ['userid' => $marketerid]);
     redirect($base_url, 'تم تحديث نسبة العمولة.', 2);
 }
 
 /* =====================================================
-   ACTION: الموافقة على طلب سحب
+   ACTION: الموافقة على طلب سحب (مع رفع إيصال اختياري)
 ===================================================== */
-if ($action === 'paywithdrawal' && $wid && confirm_sesskey()) {
-    $DB->set_field('local_ref_withdrawals', 'status', 1, ['id' => $wid]);
-    $DB->set_field('local_ref_withdrawals', 'timemodified', $now, ['id' => $wid]);
+if ($action === 'paywithdrawal' && $wid && $_SERVER['REQUEST_METHOD'] === 'POST' && confirm_sesskey()) {
+    $wr = $DB->get_record('local_ref_withdrawals', ['id' => $wid, 'status' => 0]);
+    if ($wr) {
+        $transaction = $DB->start_delegated_transaction();
+        try {
+            $DB->set_field('local_ref_withdrawals', 'status', 1, ['id' => $wid]);
+            $DB->set_field('local_ref_withdrawals', 'timemodified', $now, ['id' => $wid]);
+
+            // Handle receipt file upload.
+            if (!empty($_FILES['receipt_file']['name']) && $_FILES['receipt_file']['error'] === UPLOAD_ERR_OK) {
+                if ($_FILES['receipt_file']['size'] <= 5242880) {
+                    $ctx      = context_system::instance();
+                    $fs       = get_file_storage();
+                    $fileinfo = [
+                        'contextid' => $ctx->id,
+                        'component' => 'local_referral',
+                        'filearea'  => 'withdrawal_receipts',
+                        'itemid'    => $wid,
+                        'filepath'  => '/',
+                        'filename'  => clean_filename($_FILES['receipt_file']['name']),
+                    ];
+                    $fs->create_file_from_pathname($fileinfo, $_FILES['receipt_file']['tmp_name']);
+                    $DB->set_field('local_ref_withdrawals', 'receipt_file', $fileinfo['filename'], ['id' => $wid]);
+                }
+            }
+
+            // تحديث العمولات المعتمدة كـ مدفوعة (FIFO) بقدر مبلغ السحب
+            $remaining = (float)$wr->amount;
+            $comms = $DB->get_records_select(
+                'local_ref_commissions',
+                'marketerid = :mid AND status = 1',
+                ['mid' => $wr->marketerid],
+                'timecreated ASC'
+            );
+            foreach ($comms as $c) {
+                if ($remaining <= 0) break;
+                $DB->set_field('local_ref_commissions', 'status', 2, ['id' => $c->id]);
+                $remaining -= (float)$c->commission;
+            }
+
+            $transaction->allow_commit();
+        } catch (\Throwable $e) {
+            $transaction->rollback($e);
+            \core\notification::error($e->getMessage());
+            redirect($base_url);
+        }
+    }
     redirect($base_url, 'تم تأكيد الدفع لطلب السحب.', 2);
 }
 
@@ -95,15 +139,16 @@ if ($action === 'rejectwithdrawal' && $wid && confirm_sesskey()) {
    ACTION: حذف مسوق
 ===================================================== */
 if ($delete) {
-    $marketer = $DB->get_record('local_ref_marketers', ['id' => $delete], '*', IGNORE_MISSING);
+    $marketer = $DB->get_record('local_ref_marketer_profile', ['userid' => $delete], '*', IGNORE_MISSING);
     if (!$marketer) {
         redirect($base_url);
     }
     if ($confirm && confirm_sesskey()) {
-        $DB->delete_records('local_ref_commissions',  ['marketerid' => $delete]);
-        $DB->delete_records('local_ref_users',        ['marketerid' => $delete]);
-        $DB->delete_records('local_ref_withdrawals',  ['marketerid' => $delete]);
-        $DB->delete_records('local_ref_marketers',    ['id' => $delete]);
+        // marketerid in child tables = marketer's userid
+        $DB->delete_records('local_ref_commissions',       ['marketerid' => $delete]);
+        $DB->delete_records('local_ref_users',             ['marketerid' => $delete]);
+        $DB->delete_records('local_ref_withdrawals',       ['marketerid' => $delete]);
+        $DB->delete_records('local_ref_marketer_profile',  ['userid'     => $delete]);
         redirect($base_url, 'تم حذف المسوق بنجاح.', 2);
     }
     echo $OUTPUT->header();
@@ -120,16 +165,23 @@ if ($delete) {
    تحميل البيانات
 ===================================================== */
 $marketers = $DB->get_records_sql(
-    "SELECT m.*, u.firstname, u.lastname, u.email,
-            p.name AS parentname, p.code AS parentcode
-       FROM {local_ref_marketers} m
-  LEFT JOIN {user} u ON u.id = m.userid
-  LEFT JOIN {local_ref_marketers} p ON p.id = m.parent_id
-      WHERE m.userid IS NOT NULL
-   ORDER BY m.name ASC"
+    "SELECT mp.userid, mp.code, mp.commission_percentage, mp.parent_userid,
+            u.firstname, u.lastname, u.email,
+            pu.firstname AS parentfirstname, pu.lastname AS parentlastname,
+            pm.code AS parentcode
+       FROM {local_ref_marketer_profile} mp
+       JOIN {user} u  ON u.id  = mp.userid
+  LEFT JOIN {local_ref_marketer_profile} pm ON pm.userid = mp.parent_userid
+  LEFT JOIN {user} pu ON pu.id = mp.parent_userid
+   ORDER BY u.firstname ASC, u.lastname ASC"
 );
-// قائمة كل المسوقين (للـ dropdown)
-$all_marketers = $DB->get_records('local_ref_marketers', null, 'name ASC', 'id, name, code');
+// All marketers for dropdown (parent selector)
+$all_marketers = $DB->get_records_sql(
+    "SELECT mp.userid, mp.code, u.firstname, u.lastname
+       FROM {local_ref_marketer_profile} mp
+       JOIN {user} u ON u.id = mp.userid
+      ORDER BY u.firstname ASC"
+);
 
 $total_marketers           = count($marketers);
 $total_all                 = (float)$DB->get_field_sql("SELECT COALESCE(SUM(commission),0) FROM {local_ref_commissions}");
@@ -138,22 +190,22 @@ $total_paid                = (float)$DB->get_field_sql("SELECT COALESCE(SUM(comm
 $pending_withdrawals_count = (int)$DB->count_records('local_ref_withdrawals', ['status' => 0]);
 
 $pending_withdrawals = $DB->get_records_sql(
-    "SELECT w.*, m.name as marketername, m.code, u.firstname, u.lastname
+    "SELECT w.*, mp.code, u.firstname, u.lastname
        FROM {local_ref_withdrawals} w
-       JOIN {local_ref_marketers} m ON m.id = w.marketerid
-  LEFT JOIN {user} u ON u.id = m.userid
+       JOIN {local_ref_marketer_profile} mp ON mp.userid = w.marketerid
+       JOIN {user} u ON u.id = w.marketerid
       WHERE w.status = 0
    ORDER BY w.timecreated ASC"
 );
 
 $stats = [];
 foreach ($marketers as $m) {
-    $stats[$m->id] = [
-        'referred' => (int)$DB->count_records('local_ref_users', ['marketerid' => $m->id]),
-        'total'    => (float)$DB->get_field_sql("SELECT COALESCE(SUM(commission),0) FROM {local_ref_commissions} WHERE marketerid=:mid", ['mid' => $m->id]),
-        'pending'  => (float)$DB->get_field_sql("SELECT COALESCE(SUM(commission),0) FROM {local_ref_commissions} WHERE marketerid=:mid AND status=0", ['mid' => $m->id]),
-        'approved' => (float)$DB->get_field_sql("SELECT COALESCE(SUM(commission),0) FROM {local_ref_commissions} WHERE marketerid=:mid AND status=1", ['mid' => $m->id]),
-        'paid'     => (float)$DB->get_field_sql("SELECT COALESCE(SUM(commission),0) FROM {local_ref_commissions} WHERE marketerid=:mid AND status=2", ['mid' => $m->id]),
+    $stats[$m->userid] = [
+        'referred' => (int)$DB->count_records('local_ref_users', ['marketerid' => $m->userid]),
+        'total'    => (float)$DB->get_field_sql("SELECT COALESCE(SUM(commission),0) FROM {local_ref_commissions} WHERE marketerid=:mid", ['mid' => $m->userid]),
+        'pending'  => (float)$DB->get_field_sql("SELECT COALESCE(SUM(commission),0) FROM {local_ref_commissions} WHERE marketerid=:mid AND status=0", ['mid' => $m->userid]),
+        'approved' => (float)$DB->get_field_sql("SELECT COALESCE(SUM(commission),0) FROM {local_ref_commissions} WHERE marketerid=:mid AND status=1", ['mid' => $m->userid]),
+        'paid'     => (float)$DB->get_field_sql("SELECT COALESCE(SUM(commission),0) FROM {local_ref_commissions} WHERE marketerid=:mid AND status=2", ['mid' => $m->userid]),
     ];
 }
 
@@ -758,13 +810,11 @@ if (empty($pending_withdrawals)) {
         <tbody>';
 
     foreach ($pending_withdrawals as $wr) {
-        $wname   = htmlspecialchars(trim($wr->firstname . ' ' . $wr->lastname) ?: $wr->marketername);
-        $pay_url = (new moodle_url('/local/referral/admin/manage.php', [
-            'action' => 'paywithdrawal', 'wid' => $wr->id, 'sesskey' => sesskey()
-        ]))->out(false);
+        $wname   = htmlspecialchars(trim($wr->firstname . ' ' . $wr->lastname) ?: '');
         $rej_url = (new moodle_url('/local/referral/admin/manage.php', [
             'action' => 'rejectwithdrawal', 'wid' => $wr->id, 'sesskey' => sesskey()
         ]))->out(false);
+        $modal_id = 'payModal_' . $wr->id;
 
         echo '
         <tr style="border-bottom:1px solid #f1f5f9;transition:background .12s;" onmouseover="this.style.background=\'#f8faff\'" onmouseout="this.style.background=\'\'">
@@ -780,11 +830,10 @@ if (empty($pending_withdrawals)) {
             </td>
             <td style="padding:14px 16px;text-align:center;">
                 <div style="display:flex;gap:8px;justify-content:center;">
-                    <a href="' . $pay_url . '"
-                       class="btn-adm btn-success btn-sm"
-                       onclick="return confirm(\'تأكيد دفع ' . number_format($wr->amount, 2) . ' لـ ' . addslashes($wname) . '؟\')">
+                    <button type="button" class="btn-adm btn-success btn-sm"
+                            onclick="openPayModal(' . (int)$wr->id . ', \'' . addslashes($wname) . '\', \'' . number_format($wr->amount, 2) . '\')">
                         &#x2705; قبول الدفع
-                    </a>
+                    </button>
                     <a href="' . $rej_url . '"
                        class="btn-adm btn-danger btn-sm"
                        onclick="return confirm(\'رفض طلب السحب؟\')">
@@ -801,5 +850,70 @@ if (empty($pending_withdrawals)) {
     </div>';
 }
 echo '</div>';
+
+/* ===== PAYMENT MODAL ===== */
+$manage_url = (new moodle_url('/local/referral/admin/manage.php'))->out(false);
+echo '
+<div id="payWithdrawalModal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.5);align-items:center;justify-content:center;">
+    <div style="background:#fff;border-radius:16px;max-width:480px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,.2);overflow:hidden;">
+        <div style="background:linear-gradient(135deg,#059669,#047857);padding:20px 24px;color:#fff;">
+            <h4 style="margin:0 0 4px;font-weight:800;font-size:1.1rem;">&#x2705; تأكيد قبول الدفع</h4>
+            <p style="margin:0;opacity:.8;font-size:.88rem;" id="payModalDesc">—</p>
+        </div>
+        <form method="post" action="' . $manage_url . '" enctype="multipart/form-data" onsubmit="return validatePayModal()">
+            <input type="hidden" name="action"  value="paywithdrawal">
+            <input type="hidden" name="sesskey" value="' . sesskey() . '">
+            <input type="hidden" name="wid" id="payModalWid" value="0">
+            <div style="padding:24px;">
+                <div style="background:#d1fae5;border:1.5px solid #6ee7b7;border-radius:10px;padding:14px 18px;margin-bottom:20px;">
+                    <div style="font-size:.75rem;color:#065f46;font-weight:700;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;">المبلغ المطلوب</div>
+                    <div style="font-size:1.8rem;font-weight:800;color:#065f46;" id="payModalAmount">—</div>
+                </div>
+                <div style="margin-bottom:16px;">
+                    <label style="display:block;font-size:.83rem;font-weight:700;color:#374151;margin-bottom:6px;">
+                        &#x1F4CE; إيصال الدفع <span style="font-weight:400;color:#94a3b8;">(اختياري — PDF/JPG/PNG — حد 5 MB)</span>
+                    </label>
+                    <input type="file" name="receipt_file" id="payModalReceipt" accept=".pdf,.jpg,.jpeg,.png"
+                           style="width:100%;padding:10px 14px;border:1.5px dashed #e2e8f0;border-radius:10px;box-sizing:border-box;background:#f8fafc;cursor:pointer;font-size:.88rem;">
+                </div>
+                <div style="display:flex;gap:10px;margin-top:4px;">
+                    <button type="submit" style="flex:1;background:linear-gradient(135deg,#059669,#047857);color:#fff;border:none;padding:13px;border-radius:10px;font-size:1rem;font-weight:800;cursor:pointer;">
+                        &#x2705; تأكيد الدفع
+                    </button>
+                    <button type="button" onclick="closePayModal()"
+                            style="padding:13px 22px;border-radius:10px;border:1.5px solid #e2e8f0;background:#f8fafc;color:#64748b;font-weight:700;cursor:pointer;">
+                        إلغاء
+                    </button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+function openPayModal(wid, name, amount) {
+    document.getElementById("payModalWid").value = wid;
+    document.getElementById("payModalDesc").textContent = "الدفع لـ " + name;
+    document.getElementById("payModalAmount").textContent = amount;
+    document.getElementById("payModalReceipt").value = "";
+    var modal = document.getElementById("payWithdrawalModal");
+    modal.style.display = "flex";
+}
+function closePayModal() {
+    document.getElementById("payWithdrawalModal").style.display = "none";
+}
+function validatePayModal() {
+    var file = document.getElementById("payModalReceipt").files[0];
+    if (file && file.size > 5242880) {
+        alert("حجم الملف يتجاوز 5 MB. اختر ملفاً أصغر.");
+        return false;
+    }
+    return true;
+}
+document.getElementById("payWithdrawalModal").addEventListener("click", function(e) {
+    if (e.target === this) closePayModal();
+});
+</script>
+';
 
 echo $OUTPUT->footer();
