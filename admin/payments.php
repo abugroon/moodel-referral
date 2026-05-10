@@ -25,17 +25,16 @@ $end_of_day = $end_ts + 86399;
 /* ================================================================
    POST handler — record a disbursement.
 ================================================================ */
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && optional_param('action', '', PARAM_ALPHA) === 'add_disbursement') {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && optional_param('action', '', PARAM_ALPHAEXT) === 'add_disbursement') {
     confirm_sesskey();
 
     $manual_categories = ['Servers', 'Center', 'Coordinators', 'IT'];
 
-    $category      = required_param('category',      PARAM_TEXT);
-    $recipient     = required_param('recipient_name', PARAM_TEXT);
-    $amount        = required_param('amount',         PARAM_FLOAT);
-    $period_start  = required_param('period_start',   PARAM_INT);
-    $period_end    = required_param('period_end',     PARAM_INT);
-    $notes         = optional_param('notes',          '', PARAM_TEXT);
+    $category          = required_param('category',          PARAM_TEXT);
+    $recipient         = required_param('recipient_name',    PARAM_TEXT);
+    $amount            = required_param('amount',            PARAM_FLOAT);
+    $disbursement_date = required_param('disbursement_date', PARAM_INT);
+    $notes             = optional_param('notes',             '', PARAM_TEXT);
 
     $errors = [];
 
@@ -49,51 +48,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && optional_param('action', '', PARAM_
         $errors[] = get_string('disbursement_err_amount', 'local_referral');
     }
 
-    if (empty($errors)) {
-        // Check remaining balance for this category.
-        $sql_rev = "SELECT COALESCE(SUM(amount), 0) AS total
-                      FROM {payments}
-                     WHERE timecreated >= :start AND timecreated <= :end";
-        $rev_record  = $DB->get_record_sql($sql_rev, ['start' => $period_start, 'end' => $period_end + 86399]);
-        $grand_total = (float)($rev_record->total ?? 0);
-
-        $distribution = ['Marketing' => 20, 'Teacher' => 30, 'Servers' => 10, 'Center' => 25, 'Coordinators' => 5, 'IT' => 10];
-        $allocated    = ($grand_total * ($distribution[$category] ?? 0)) / 100;
-        $disbursed    = disbursement_manager::get_disbursed_total($category, $period_start, $period_end + 86399);
-        $remaining    = $allocated - $disbursed;
-
-        if ($amount > $remaining + 0.001) {
-            $errors[] = get_string('disbursement_err_exceeds', 'local_referral', number_format($remaining, 2));
-        }
-    }
-
     if (!empty($errors)) {
-        foreach ($errors as $e) {
-            \core\notification::error($e);
-        }
-        redirect(new moodle_url('/local/referral/admin/payments.php', ['startdate' => $start_ts, 'enddate' => $end_ts]));
+        $errmsg = implode(' | ', $errors);
+        redirect(new moodle_url('/local/referral/admin/payments.php',
+            ['startdate' => $start_ts, 'enddate' => $end_ts, 'status' => 'error', 'msg' => $errmsg]));
     }
 
-    $transaction = $DB->start_delegated_transaction();
-    try {
-        $newid = disbursement_manager::save([
-            'category'      => $category,
-            'recipient_name'=> $recipient,
-            'amount'        => $amount,
-            'period_start'  => $period_start,
-            'period_end'    => $period_end,
-            'notes'         => $notes,
-        ]);
+    $newid = disbursement_manager::save([
+        'category'          => $category,
+        'recipient_name'    => $recipient,
+        'amount'            => $amount,
+        'disbursement_date' => $disbursement_date,
+        'notes'             => $notes,
+    ]);
 
-        // Handle receipt file upload.
-        if (!empty($_FILES['receipt_file']['name']) && $_FILES['receipt_file']['error'] === UPLOAD_ERR_OK) {
-            if ($_FILES['receipt_file']['size'] > 5242880) {
-                throw new \moodle_exception('File exceeds 5 MB limit.');
-            }
-            $context  = context_system::instance();
+    if ($newid && !empty($_FILES['receipt_file']['name']) && $_FILES['receipt_file']['error'] === UPLOAD_ERR_OK) {
+        if ($_FILES['receipt_file']['size'] <= 5242880) {
+            $ctx      = context_system::instance();
             $fs       = get_file_storage();
             $fileinfo = [
-                'contextid' => $context->id,
+                'contextid' => $ctx->id,
                 'component' => 'local_referral',
                 'filearea'  => 'disbursement_receipts',
                 'itemid'    => $newid,
@@ -103,16 +77,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && optional_param('action', '', PARAM_
             $fs->create_file_from_pathname($fileinfo, $_FILES['receipt_file']['tmp_name']);
             disbursement_manager::update_receipt_file($newid, $fileinfo['filename']);
         }
-
-        $transaction->allow_commit();
-    } catch (\Throwable $e) {
-        $transaction->rollback($e);
-        \core\notification::error($e->getMessage());
-        redirect(new moodle_url('/local/referral/admin/payments.php', ['startdate' => $start_ts, 'enddate' => $end_ts]));
     }
 
-    \core\notification::success(get_string('disbursement_success', 'local_referral'));
-    redirect(new moodle_url('/local/referral/admin/payments.php', ['startdate' => $start_ts, 'enddate' => $end_ts]));
+    redirect(new moodle_url('/local/referral/admin/payments.php',
+        ['startdate' => $start_ts, 'enddate' => $end_ts, 'status' => 'success']));
 }
 
 /* ================================================================
@@ -175,7 +143,7 @@ foreach ($manual_cats as $mc) {
 /* ================================================================
    Disbursement history.
 ================================================================ */
-$history = disbursement_manager::get_history($start_ts, $end_of_day);
+$history = disbursement_manager::get_history();
 
 // Group history by category for subtotals.
 $history_by_cat = [];
@@ -186,11 +154,28 @@ foreach ($history as $h) {
 /* ================================================================
    Render.
 ================================================================ */
+$page_status = optional_param('status', '', PARAM_ALPHA);
+$page_msg    = optional_param('msg', '', PARAM_TEXT);
+
 echo $OUTPUT->header();
 echo local_referral_admin_tabs('payments');
 ?>
 
 <div class="container-fluid mt-4" style="max-width:1400px;">
+
+    <?php if ($page_status === 'success'): ?>
+        <div class="alert alert-success alert-dismissible fade show d-flex align-items-center gap-2 mb-4" role="alert">
+            <i class="fa fa-check-circle fa-lg"></i>
+            <strong>Disbursement recorded successfully.</strong>
+            <button type="button" class="btn-close ms-auto" data-bs-dismiss="alert"></button>
+        </div>
+    <?php elseif ($page_status === 'error'): ?>
+        <div class="alert alert-danger alert-dismissible fade show d-flex align-items-center gap-2 mb-4" role="alert">
+            <i class="fa fa-times-circle fa-lg"></i>
+            <div><strong>Error:</strong> <?php echo s($page_msg); ?></div>
+            <button type="button" class="btn-close ms-auto" data-bs-dismiss="alert"></button>
+        </div>
+    <?php endif; ?>
 
     <!-- ── Page header ── -->
     <div class="d-flex align-items-center justify-content-between mb-4">
@@ -236,7 +221,7 @@ echo local_referral_admin_tabs('payments');
                     <div class="small fw-bold text-primary text-uppercase mb-1">Total Revenue (Period)</div>
                     <div class="h2 mb-0 fw-bold text-primary">
                         <?php echo number_format($grand_total, 2); ?>
-                        <span class="fs-6 fw-normal">USD</span>
+                        <span class="fs-6 fw-normal">SDG</span>
                     </div>
                 </div>
             </div>
@@ -245,7 +230,7 @@ echo local_referral_admin_tabs('payments');
             <div class="card shadow-sm border-0 border-start border-success border-5 h-100 py-2">
                 <div class="card-body">
                     <div class="small fw-bold text-success text-uppercase mb-1">Total Allocated</div>
-                    <div class="h4 mb-0 fw-bold text-success"><?php echo number_format($total_allocated, 2); ?> USD</div>
+                    <div class="h4 mb-0 fw-bold text-success"><?php echo number_format($total_allocated, 2); ?> SDG</div>
                 </div>
             </div>
         </div>
@@ -253,7 +238,7 @@ echo local_referral_admin_tabs('payments');
             <div class="card shadow-sm border-0 border-start border-warning border-5 h-100 py-2">
                 <div class="card-body">
                     <div class="small fw-bold text-warning text-uppercase mb-1">Total Disbursed</div>
-                    <div class="h4 mb-0 fw-bold text-warning"><?php echo number_format($total_disbursed, 2); ?> USD</div>
+                    <div class="h4 mb-0 fw-bold text-warning"><?php echo number_format($total_disbursed, 2); ?> SDG</div>
                 </div>
             </div>
         </div>
@@ -261,7 +246,7 @@ echo local_referral_admin_tabs('payments');
             <div class="card shadow-sm border-0 border-start border-danger border-5 h-100 py-2">
                 <div class="card-body">
                     <div class="small fw-bold text-danger text-uppercase mb-1">Total Remaining</div>
-                    <div class="h4 mb-0 fw-bold text-danger"><?php echo number_format($total_remaining, 2); ?> USD</div>
+                    <div class="h4 mb-0 fw-bold text-danger"><?php echo number_format($total_remaining, 2); ?> SDG</div>
                 </div>
             </div>
         </div>
@@ -337,11 +322,11 @@ echo local_referral_admin_tabs('payments');
                     <table class="table table-hover mb-0 align-middle">
                         <thead class="bg-light">
                             <tr>
-                                <th class="ps-4 py-3 border-0 small">Date</th>
+                                <th class="ps-4 py-3 border-0 small">Disbursement Date</th>
                                 <th class="py-3 border-0 small">Category</th>
                                 <th class="py-3 border-0 small">Recipient</th>
                                 <th class="py-3 border-0 small text-end">Amount</th>
-                                <th class="py-3 border-0 small">Period</th>
+                                <th class="py-3 border-0 small" style="max-width:200px;">Notes</th>
                                 <th class="py-3 border-0 small">Recorded By</th>
                                 <th class="pe-4 py-3 border-0 small">Receipt</th>
                             </tr>
@@ -355,29 +340,56 @@ echo local_referral_admin_tabs('payments');
                             <?php foreach ($cat_rows as $h): ?>
                                 <tr>
                                     <td class="ps-4 small text-muted">
-                                        <?php echo userdate($h->timecreated, '%d/%m/%Y'); ?>
+                                        <?php echo date('d/m/Y', $h->period_start); ?>
                                     </td>
                                     <td><span class="badge bg-secondary"><?php echo s($h->category); ?></span></td>
                                     <td><?php echo s($h->recipient_name); ?></td>
                                     <td class="text-end fw-bold text-warning">
                                         <?php echo number_format((float)$h->amount, 2); ?>
                                     </td>
-                                    <td class="small text-muted">
-                                        <?php echo date('d/m/Y', $h->period_start); ?> –
-                                        <?php echo date('d/m/Y', $h->period_end); ?>
+                                    <td class="small text-muted" style="max-width:200px;">
+                                        <?php if (!empty($h->notes)): ?>
+                                            <span class="d-inline-block text-truncate" style="max-width:180px;"
+                                                  title="<?php echo s($h->notes); ?>"
+                                                  data-bs-toggle="tooltip" data-bs-placement="top">
+                                                <?php echo s($h->notes); ?>
+                                            </span>
+                                        <?php else: ?>
+                                            <span class="text-muted">—</span>
+                                        <?php endif; ?>
                                     </td>
                                     <td class="small"><?php echo s($h->firstname . ' ' . $h->lastname); ?></td>
                                     <td class="pe-4">
                                         <?php if (!empty($h->receipt_file)): ?>
                                             <?php
-                                            $url = moodle_url::make_pluginfile_url(
+                                            $preview_url  = moodle_url::make_pluginfile_url(
+                                                $ctx->id, 'local_referral', 'disbursement_receipts',
+                                                $h->id, '/', $h->receipt_file, false
+                                            );
+                                            $download_url = moodle_url::make_pluginfile_url(
                                                 $ctx->id, 'local_referral', 'disbursement_receipts',
                                                 $h->id, '/', $h->receipt_file, true
                                             );
+                                            $receipt_ext = strtolower(pathinfo($h->receipt_file, PATHINFO_EXTENSION));
+                                            $is_img = in_array($receipt_ext, ['jpg', 'jpeg', 'png']) ? '1' : '0';
                                             ?>
-                                            <a href="<?php echo $url->out(false); ?>" target="_blank" class="btn btn-sm btn-outline-secondary">
-                                                <i class="fa fa-download me-1"></i><?php echo get_string('receipt_download', 'local_referral'); ?>
-                                            </a>
+                                            <div class="d-flex gap-1 flex-nowrap">
+                                                <button type="button"
+                                                        class="btn btn-sm btn-outline-primary"
+                                                        data-bs-toggle="modal"
+                                                        data-bs-target="#receiptPreviewModal"
+                                                        data-preview-url="<?php echo s($preview_url->out(false)); ?>"
+                                                        data-filename="<?php echo s($h->receipt_file); ?>"
+                                                        data-isimage="<?php echo $is_img; ?>">
+                                                    <i class="fa fa-eye me-1"></i>Preview
+                                                </button>
+                                                <a href="<?php echo s($download_url->out(false)); ?>"
+                                                   download="<?php echo s($h->receipt_file); ?>"
+                                                   class="btn btn-sm btn-outline-secondary"
+                                                   title="Download">
+                                                    <i class="fa fa-download"></i>
+                                                </a>
+                                            </div>
                                         <?php else: ?>
                                             <span class="text-muted small">—</span>
                                         <?php endif; ?>
@@ -429,7 +441,7 @@ echo local_referral_admin_tabs('payments');
                             <select name="category" id="disbCategory" class="form-select" required>
                                 <option value="">— Select category —</option>
                                 <?php foreach ($manual_cats as $mc): ?>
-                                    <option value="<?php echo $mc; ?>"><?php echo $mc; ?> (Remaining: <?php echo number_format($remaining_by_category[$mc], 2); ?> USD)</option>
+                                    <option value="<?php echo $mc; ?>"><?php echo $mc; ?> (Remaining: <?php echo number_format($remaining_by_category[$mc], 2); ?> SDG)</option>
                                 <?php endforeach; ?>
                             </select>
                         </div>
@@ -438,22 +450,17 @@ echo local_referral_admin_tabs('payments');
                             <input type="text" name="recipient_name" class="form-control" required placeholder="Full name">
                         </div>
                         <div class="col-md-6">
-                            <label class="form-label fw-bold">Amount (USD) <span class="text-danger">*</span></label>
+                            <label class="form-label fw-bold">Amount (SDG) <span class="text-danger">*</span></label>
                             <input type="number" name="amount" id="disbAmount" class="form-control"
                                    min="0.01" step="0.01" required placeholder="0.00">
                             <div id="disbAmountHint" class="form-text text-muted"></div>
                         </div>
-                        <div class="col-md-3">
-                            <label class="form-label fw-bold">Period From <span class="text-danger">*</span></label>
-                            <input type="date" id="disbPeriodStart" class="form-control"
-                                   value="<?php echo date('Y-m-d', $start_ts); ?>" required>
-                            <input type="hidden" name="period_start" id="disbPeriodStartTs" value="<?php echo $start_ts; ?>">
-                        </div>
-                        <div class="col-md-3">
-                            <label class="form-label fw-bold">Period To <span class="text-danger">*</span></label>
-                            <input type="date" id="disbPeriodEnd" class="form-control"
-                                   value="<?php echo date('Y-m-d', $end_ts); ?>" required>
-                            <input type="hidden" name="period_end" id="disbPeriodEndTs" value="<?php echo $end_ts; ?>">
+                        <div class="col-md-6">
+                            <label class="form-label fw-bold">Disbursement Date <span class="text-danger">*</span></label>
+                            <input type="date" id="disbDate" class="form-control"
+                                   value="<?php echo date('Y-m-d'); ?>" required>
+                            <input type="hidden" name="disbursement_date" id="disbDateTs"
+                                   value="<?php echo strtotime(date('Y-m-d')); ?>">
                         </div>
                         <div class="col-md-6">
                             <label class="form-label fw-bold">Receipt (optional, max 5 MB)</label>
@@ -477,6 +484,35 @@ echo local_referral_admin_tabs('payments');
     </div>
 </div>
 
+<!-- ================================================================
+     #receiptPreviewModal
+================================================================ -->
+<div class="modal fade" id="receiptPreviewModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold">
+                    <i class="fa fa-file-image-o me-2 text-primary"></i>
+                    <span id="receiptPreviewTitle">Receipt Preview</span>
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body p-0 text-center bg-light" id="receiptPreviewBody" style="min-height:420px;">
+                <div class="d-flex align-items-center justify-content-center h-100 py-5 text-muted">
+                    <div class="spinner-border text-primary me-2" role="status" style="width:1.2rem;height:1.2rem;"></div>
+                    Loading…
+                </div>
+            </div>
+            <div class="modal-footer">
+                <a id="receiptDownloadBtn" href="#" class="btn btn-outline-secondary">
+                    <i class="fa fa-download me-1"></i> Download
+                </a>
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script>
 const remainingByCategory = <?php echo json_encode($remaining_by_category); ?>;
 
@@ -487,7 +523,7 @@ document.getElementById('disbCategory').addEventListener('change', function () {
     if (cat && remainingByCategory[cat] !== undefined) {
         const rem = remainingByCategory[cat];
         inp.max   = rem;
-        hint.textContent = 'Available: ' + rem.toFixed(2) + ' USD';
+        hint.textContent = 'Available: ' + rem.toFixed(2) + ' SDG';
         hint.className = 'form-text ' + (rem > 0 ? 'text-success' : 'text-danger');
     } else {
         inp.removeAttribute('max');
@@ -501,11 +537,45 @@ document.getElementById('disbursementModal').addEventListener('hidden.bs.modal',
     document.getElementById('disbAmountHint').textContent = '';
 });
 
-document.getElementById('disbPeriodStart').addEventListener('change', function () {
-    document.getElementById('disbPeriodStartTs').value = Math.floor(new Date(this.value).getTime() / 1000);
+document.getElementById('disbDate').addEventListener('change', function () {
+    document.getElementById('disbDateTs').value = Math.floor(new Date(this.value).getTime() / 1000);
 });
-document.getElementById('disbPeriodEnd').addEventListener('change', function () {
-    document.getElementById('disbPeriodEndTs').value = Math.floor(new Date(this.value).getTime() / 1000);
+
+// Populate receipt preview modal before it shows (Bootstrap 5 official pattern).
+document.getElementById('receiptPreviewModal').addEventListener('show.bs.modal', function (e) {
+    const btn      = e.relatedTarget;
+    const url      = btn.dataset.previewUrl;
+    const filename = btn.dataset.filename;
+    const isImage  = btn.dataset.isimage === '1';
+
+    document.getElementById('receiptPreviewTitle').textContent = filename;
+
+    const dlBtn = document.getElementById('receiptDownloadBtn');
+    dlBtn.href = url;
+    dlBtn.setAttribute('download', filename);
+
+    const body = document.getElementById('receiptPreviewBody');
+    if (isImage) {
+        const img = new Image();
+        img.src       = url;
+        img.className = 'img-fluid';
+        img.style.cssText = 'max-height:80vh;display:block;margin:0 auto;';
+        body.innerHTML = '';
+        body.appendChild(img);
+    } else {
+        body.innerHTML = '<embed src="' + url + '" type="application/pdf" width="100%" height="600" style="display:block;">';
+    }
+});
+
+document.getElementById('receiptPreviewModal').addEventListener('hidden.bs.modal', function () {
+    document.getElementById('receiptPreviewBody').innerHTML = '';
+    document.getElementById('receiptPreviewTitle').textContent = 'Receipt Preview';
+    document.getElementById('receiptDownloadBtn').href = '#';
+});
+
+// Bootstrap tooltips for truncated notes.
+document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(function (el) {
+    new bootstrap.Tooltip(el);
 });
 
 function disbModalValidate() {
@@ -514,19 +584,15 @@ function disbModalValidate() {
     const file   = document.getElementById('disbReceipt').files[0];
 
     if (!cat) {
-        alert('Please select a category.');
+        alert('الرجاء اختيار الجهة.');
         return false;
     }
     if (isNaN(amount) || amount <= 0) {
-        alert('Please enter a valid amount.');
-        return false;
-    }
-    if (remainingByCategory[cat] !== undefined && amount > remainingByCategory[cat] + 0.001) {
-        alert('Amount exceeds remaining balance of ' + remainingByCategory[cat].toFixed(2) + ' USD.');
+        alert('الرجاء إدخال مبلغ صحيح.');
         return false;
     }
     if (file && file.size > 5242880) {
-        alert('Receipt file must not exceed 5 MB.');
+        alert('حجم الملف يتجاوز 5 ميجابايت.');
         return false;
     }
     return true;

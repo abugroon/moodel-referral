@@ -1,7 +1,5 @@
 <?php
 // /local/referral/admin/manage.php
-// لوحة إدارة المسوقين — للمدير فقط
-
 require_once(__DIR__ . '/../../../config.php');
 require_once($CFG->libdir . '/adminlib.php');
 require_once(__DIR__ . '/tabs.php');
@@ -19,13 +17,13 @@ $wid        = optional_param('wid', 0, PARAM_INT);
 $delete     = optional_param('delete', 0, PARAM_INT);
 $confirm    = optional_param('confirm', 0, PARAM_BOOL);
 $now        = time();
+$sess       = sesskey();
 
 $base_url = new moodle_url('/local/referral/admin/manage.php');
 
-/* تحميل الإعدادات الحالية */
-$min_withdrawal    = (float)(get_config('local_referral', 'min_withdrawal') ?: 10);
-$def_commission    = (int)(get_config('local_referral', 'default_commission_percentage') ?: 10);
-$enable_parent     = (bool)(get_config('local_referral', 'enable_parent_linking') ?: 0);
+$min_withdrawal = (float)(get_config('local_referral', 'min_withdrawal') ?: 10);
+$def_commission = (int)(get_config('local_referral', 'default_commission_percentage') ?: 10);
+$enable_parent  = (bool)(get_config('local_referral', 'enable_parent_linking') ?: 0);
 
 /* =====================================================
    ACTION: حفظ الإعدادات
@@ -43,7 +41,7 @@ if ($action === 'savesettings' && confirm_sesskey()) {
 ===================================================== */
 if ($action === 'pay' && $marketerid && confirm_sesskey()) {
     $DB->execute(
-        "UPDATE {local_ref_commissions} SET status = 2 WHERE marketerid = :mid AND status = 1",
+        "UPDATE {local_ref_commissions} SET status = 2 WHERE marketerid = :mid AND status < 2",
         ['mid' => $marketerid]
     );
     redirect($base_url, 'تم تسجيل الدفع بنجاح.', 2);
@@ -74,7 +72,7 @@ if ($action === 'setcommission' && $marketerid && confirm_sesskey()) {
 }
 
 /* =====================================================
-   ACTION: الموافقة على طلب سحب (مع رفع إيصال اختياري)
+   ACTION: الموافقة على طلب سحب
 ===================================================== */
 if ($action === 'paywithdrawal' && $wid && $_SERVER['REQUEST_METHOD'] === 'POST' && confirm_sesskey()) {
     $wr = $DB->get_record('local_ref_withdrawals', ['id' => $wid, 'status' => 0]);
@@ -84,7 +82,6 @@ if ($action === 'paywithdrawal' && $wid && $_SERVER['REQUEST_METHOD'] === 'POST'
             $DB->set_field('local_ref_withdrawals', 'status', 1, ['id' => $wid]);
             $DB->set_field('local_ref_withdrawals', 'timemodified', $now, ['id' => $wid]);
 
-            // Handle receipt file upload.
             if (!empty($_FILES['receipt_file']['name']) && $_FILES['receipt_file']['error'] === UPLOAD_ERR_OK) {
                 if ($_FILES['receipt_file']['size'] <= 5242880) {
                     $ctx      = context_system::instance();
@@ -102,20 +99,9 @@ if ($action === 'paywithdrawal' && $wid && $_SERVER['REQUEST_METHOD'] === 'POST'
                 }
             }
 
-            // تحديث العمولات المعتمدة كـ مدفوعة (FIFO) بقدر مبلغ السحب
-            $remaining = (float)$wr->amount;
-            $comms = $DB->get_records_select(
-                'local_ref_commissions',
-                'marketerid = :mid AND status = 1',
-                ['mid' => $wr->marketerid],
-                'timecreated ASC'
-            );
-            foreach ($comms as $c) {
-                if ($remaining <= 0) break;
-                $DB->set_field('local_ref_commissions', 'status', 2, ['id' => $c->id]);
-                $remaining -= (float)$c->commission;
-            }
-
+            // Withdrawal amount is tracked directly in local_ref_withdrawals (status=1).
+            // Balance formula in myaccount.php uses SUM(paid withdrawals) to compute
+            // what has been paid out — no need to mutate individual commission records.
             $transaction->allow_commit();
         } catch (\Throwable $e) {
             $transaction->rollback($e);
@@ -136,6 +122,14 @@ if ($action === 'rejectwithdrawal' && $wid && confirm_sesskey()) {
 }
 
 /* =====================================================
+   ACTION: حذف سجل دفعة معالجة
+===================================================== */
+if ($action === 'deletewithdrawal' && $wid && confirm_sesskey()) {
+    $DB->delete_records('local_ref_withdrawals', ['id' => $wid]);
+    redirect($base_url, 'تم حذف سجل الدفعة.', 2);
+}
+
+/* =====================================================
    ACTION: حذف مسوق
 ===================================================== */
 if ($delete) {
@@ -144,17 +138,16 @@ if ($delete) {
         redirect($base_url);
     }
     if ($confirm && confirm_sesskey()) {
-        // marketerid in child tables = marketer's userid
-        $DB->delete_records('local_ref_commissions',       ['marketerid' => $delete]);
-        $DB->delete_records('local_ref_users',             ['marketerid' => $delete]);
-        $DB->delete_records('local_ref_withdrawals',       ['marketerid' => $delete]);
-        $DB->delete_records('local_ref_marketer_profile',  ['userid'     => $delete]);
+        $DB->delete_records('local_ref_commissions',      ['marketerid' => $delete]);
+        $DB->delete_records('local_ref_users',            ['marketerid' => $delete]);
+        $DB->delete_records('local_ref_withdrawals',      ['marketerid' => $delete]);
+        $DB->delete_records('local_ref_marketer_profile', ['userid'     => $delete]);
         redirect($base_url, 'تم حذف المسوق بنجاح.', 2);
     }
     echo $OUTPUT->header();
     echo $OUTPUT->confirm(
         'هل أنت متأكد من حذف هذا المسوق؟ سيتم حذف جميع عمولاته وطلبات سحبه.',
-        new moodle_url('/local/referral/admin/manage.php', ['delete' => $delete, 'confirm' => 1, 'sesskey' => sesskey()]),
+        new moodle_url('/local/referral/admin/manage.php', ['delete' => $delete, 'confirm' => 1, 'sesskey' => $sess]),
         $base_url
     );
     echo $OUTPUT->footer();
@@ -164,756 +157,721 @@ if ($delete) {
 /* =====================================================
    تحميل البيانات
 ===================================================== */
+
+// ── Safety: ensure table exists; auto-migrate from old table if needed ──
+{
+    $dbman = $DB->get_manager();
+
+    if (!$dbman->table_exists(new xmldb_table('local_ref_marketer_profile'))) {
+        redirect(
+            new moodle_url('/admin/index.php'),
+            'الجدول local_ref_marketer_profile غير موجود — الرجاء تشغيل ترقية قاعدة البيانات.',
+            null,
+            \core\output\notification::NOTIFY_ERROR
+        );
+    }
+
+    // If profile table is empty but the old table still has rows, migrate now.
+    $old_tbl = new xmldb_table('local_ref_marketers');
+    if ($DB->count_records('local_ref_marketer_profile') == 0 && $dbman->table_exists($old_tbl)) {
+        $old_rows = $DB->get_records_select(
+            'local_ref_marketers', 'userid IS NOT NULL', [], '',
+            'id, userid, code, commission_percentage, parent_id, timecreated, timemodified'
+        );
+        $id_to_userid = [];
+        foreach ($old_rows as $r) {
+            $id_to_userid[$r->id] = (int)$r->userid;
+        }
+        $migration_now = time();
+        foreach ($old_rows as $r) {
+            if ($DB->record_exists('local_ref_marketer_profile', ['userid' => $r->userid])) {
+                continue;
+            }
+            $parent_uid = (!empty($r->parent_id) && isset($id_to_userid[$r->parent_id]))
+                ? $id_to_userid[$r->parent_id] : null;
+            $DB->insert_record('local_ref_marketer_profile', (object)[
+                'userid'                => (int)$r->userid,
+                'code'                  => $r->code,
+                'commission_percentage' => (int)$r->commission_percentage,
+                'parent_userid'         => $parent_uid,
+                'timecreated'           => !empty($r->timecreated)  ? (int)$r->timecreated  : $migration_now,
+                'timemodified'          => !empty($r->timemodified) ? (int)$r->timemodified : $migration_now,
+            ]);
+        }
+        foreach ($id_to_userid as $old_id => $uid) {
+            foreach (['local_ref_users', 'local_ref_commissions', 'local_ref_withdrawals'] as $child_tbl) {
+                if ($dbman->table_exists(new xmldb_table($child_tbl))) {
+                    $DB->execute(
+                        "UPDATE {{$child_tbl}} SET marketerid = :uid WHERE marketerid = :old_id",
+                        ['uid' => $uid, 'old_id' => $old_id]
+                    );
+                }
+            }
+        }
+    }
+}
+
+// LEFT JOIN so marketers whose Moodle account was deleted still appear.
 $marketers = $DB->get_records_sql(
     "SELECT mp.userid, mp.code, mp.commission_percentage, mp.parent_userid,
             u.firstname, u.lastname, u.email,
             pu.firstname AS parentfirstname, pu.lastname AS parentlastname,
             pm.code AS parentcode
        FROM {local_ref_marketer_profile} mp
-       JOIN {user} u  ON u.id  = mp.userid
-  LEFT JOIN {local_ref_marketer_profile} pm ON pm.userid = mp.parent_userid
-  LEFT JOIN {user} pu ON pu.id = mp.parent_userid
-   ORDER BY u.firstname ASC, u.lastname ASC"
+  LEFT JOIN {user}                       u   ON u.id  = mp.userid
+  LEFT JOIN {local_ref_marketer_profile} pm  ON pm.userid = mp.parent_userid
+  LEFT JOIN {user}                       pu  ON pu.id = mp.parent_userid
+   ORDER BY COALESCE(u.firstname, 'zzz') ASC, COALESCE(u.lastname, 'zzz') ASC"
 );
-// All marketers for dropdown (parent selector)
+
 $all_marketers = $DB->get_records_sql(
     "SELECT mp.userid, mp.code, u.firstname, u.lastname
        FROM {local_ref_marketer_profile} mp
-       JOIN {user} u ON u.id = mp.userid
-      ORDER BY u.firstname ASC"
+  LEFT JOIN {user} u ON u.id = mp.userid
+      ORDER BY COALESCE(u.firstname, 'zzz') ASC"
 );
+
+// Batch stats — 2 queries instead of N×5
+$comm_stats_raw = $DB->get_records_sql(
+    "SELECT marketerid,
+            COALESCE(SUM(commission), 0) AS total,
+            COALESCE(SUM(CASE WHEN status=0 THEN commission ELSE 0 END), 0) AS pending,
+            COALESCE(SUM(CASE WHEN status=1 THEN commission ELSE 0 END), 0) AS approved,
+            COALESCE(SUM(CASE WHEN status=2 THEN commission ELSE 0 END), 0) AS paid
+       FROM {local_ref_commissions}
+      GROUP BY marketerid"
+);
+$referred_raw = $DB->get_records_sql(
+    "SELECT marketerid, COUNT(*) AS cnt FROM {local_ref_users} GROUP BY marketerid"
+);
+
+// Paid withdrawal amounts per marketer
+$wd_paid_raw = $DB->get_records_sql(
+    "SELECT marketerid, COALESCE(SUM(amount), 0) AS wd_paid
+       FROM {local_ref_withdrawals}
+      WHERE status = 1
+      GROUP BY marketerid"
+);
+
+$stats = [];
+foreach ($marketers as $m) {
+    $cs    = $comm_stats_raw[$m->userid] ?? null;
+    $wd    = (float)(isset($wd_paid_raw[$m->userid]) ? $wd_paid_raw[$m->userid]->wd_paid : 0);
+    $comm_paid = $cs ? (float)$cs->paid : 0.0;
+    $stats[$m->userid] = [
+        'referred'  => (int)(isset($referred_raw[$m->userid]) ? $referred_raw[$m->userid]->cnt : 0),
+        'total'     => $cs ? (float)$cs->total    : 0.0,
+        'pending'   => $cs ? (float)$cs->pending  : 0.0,
+        'approved'  => $cs ? (float)$cs->approved : 0.0,
+        'paid'      => $comm_paid + $wd,   // direct approvals + paid withdrawals
+        'wd_paid'   => $wd,
+    ];
+}
 
 $total_marketers           = count($marketers);
 $total_all                 = (float)$DB->get_field_sql("SELECT COALESCE(SUM(commission),0) FROM {local_ref_commissions}");
-$total_approved            = (float)$DB->get_field_sql("SELECT COALESCE(SUM(commission),0) FROM {local_ref_commissions} WHERE status=1");
-$total_paid                = (float)$DB->get_field_sql("SELECT COALESCE(SUM(commission),0) FROM {local_ref_commissions} WHERE status=2");
+$total_approved            = (float)$DB->get_field_sql("SELECT COALESCE(SUM(commission),0) FROM {local_ref_commissions} WHERE status=0");
+$total_paid_direct         = (float)$DB->get_field_sql("SELECT COALESCE(SUM(commission),0) FROM {local_ref_commissions} WHERE status=2");
+$total_paid_wd             = (float)$DB->get_field_sql("SELECT COALESCE(SUM(amount),0) FROM {local_ref_withdrawals} WHERE status=1");
+$total_paid                = $total_paid_direct + $total_paid_wd;
 $pending_withdrawals_count = (int)$DB->count_records('local_ref_withdrawals', ['status' => 0]);
 
 $pending_withdrawals = $DB->get_records_sql(
     "SELECT w.*, mp.code, u.firstname, u.lastname
        FROM {local_ref_withdrawals} w
-       JOIN {local_ref_marketer_profile} mp ON mp.userid = w.marketerid
-       JOIN {user} u ON u.id = w.marketerid
+  LEFT JOIN {local_ref_marketer_profile} mp ON mp.userid = w.marketerid
+  LEFT JOIN {user} u ON u.id = w.marketerid
       WHERE w.status = 0
    ORDER BY w.timecreated ASC"
 );
 
-$stats = [];
-foreach ($marketers as $m) {
-    $stats[$m->userid] = [
-        'referred' => (int)$DB->count_records('local_ref_users', ['marketerid' => $m->userid]),
-        'total'    => (float)$DB->get_field_sql("SELECT COALESCE(SUM(commission),0) FROM {local_ref_commissions} WHERE marketerid=:mid", ['mid' => $m->userid]),
-        'pending'  => (float)$DB->get_field_sql("SELECT COALESCE(SUM(commission),0) FROM {local_ref_commissions} WHERE marketerid=:mid AND status=0", ['mid' => $m->userid]),
-        'approved' => (float)$DB->get_field_sql("SELECT COALESCE(SUM(commission),0) FROM {local_ref_commissions} WHERE marketerid=:mid AND status=1", ['mid' => $m->userid]),
-        'paid'     => (float)$DB->get_field_sql("SELECT COALESCE(SUM(commission),0) FROM {local_ref_commissions} WHERE marketerid=:mid AND status=2", ['mid' => $m->userid]),
-    ];
-}
+$processed_withdrawals = $DB->get_records_sql(
+    "SELECT w.*, mp.code, u.firstname, u.lastname
+       FROM {local_ref_withdrawals} w
+  LEFT JOIN {local_ref_marketer_profile} mp ON mp.userid = w.marketerid
+  LEFT JOIN {user} u ON u.id = w.marketerid
+      WHERE w.status IN (1, 2)
+   ORDER BY COALESCE(w.timemodified, w.timecreated) DESC"
+);
 
 echo $OUTPUT->header();
 echo local_referral_admin_tabs('manage');
 ?>
-
 <style>
-/* ==========================================
-   MANAGE MARKETERS — ADMIN STYLES
-========================================== */
+/* ── Referral plugin — unified light theme ── */
 :root {
-    --adm-primary:   #2563eb;
-    --adm-success:   #059669;
-    --adm-warning:   #d97706;
-    --adm-danger:    #dc2626;
-    --adm-info:      #0891b2;
-    --adm-purple:    #7c3aed;
-    --adm-dark:      #1e2a3a;
-    --adm-bg:        #f1f5f9;
-    --adm-card:      #ffffff;
-    --adm-border:    #e2e8f0;
+    --rp: #2563eb;
+    --rg: #059669;
+    --ra: #d97706;
+    --rr: #dc2626;
+    --rd: #1e293b;
+    --rm: #64748b;
+    --rb: #e2e8f0;
+    --rs: #f8fafc;
 }
 
-body { background: var(--adm-bg); }
+.ref-wrap { padding: 2px 0 48px; }
 
-/* ===== PAGE HEADER ===== */
-.adm-page-header {
-    background: linear-gradient(135deg, #1e2a3a 0%, #1e3a6e 60%, #2563eb 100%);
-    color: #fff;
-    border-radius: 18px;
-    padding: 30px 36px;
-    margin-bottom: 28px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    flex-wrap: wrap;
-    gap: 12px;
-    position: relative;
-    overflow: hidden;
-}
-.adm-page-header::after {
-    content: '';
-    position: absolute;
-    bottom: -50px; right: -30px;
-    width: 220px; height: 220px;
-    background: rgba(255,255,255,.04);
-    border-radius: 50%;
-    pointer-events: none;
-}
-.adm-page-header h1 { font-size: 1.75rem; font-weight: 800; margin: 0 0 4px; }
-.adm-page-header p  { margin: 0; opacity: .75; font-size: .93rem; }
-
-/* ===== SUMMARY CARDS ===== */
-.adm-summary {
+/* Stats row */
+.ref-stats {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(155px, 1fr));
-    gap: 16px;
-    margin-bottom: 28px;
+    grid-template-columns: repeat(auto-fit, minmax(135px, 1fr));
+    gap: 12px;
+    margin-bottom: 20px;
 }
-.adm-scard {
-    background: var(--adm-card);
-    border-radius: 14px;
-    padding: 20px 18px;
-    box-shadow: 0 1px 8px rgba(0,0,0,.08);
-    border-top: 4px solid var(--adm-primary);
-    position: relative;
-    overflow: hidden;
+.ref-stat {
+    background: #fff;
+    border: 1px solid var(--rb);
+    border-radius: 10px;
+    padding: 14px 16px;
+    border-left: 3px solid var(--rp);
 }
-.adm-scard.sc-success { border-top-color: var(--adm-success); }
-.adm-scard.sc-info    { border-top-color: var(--adm-info); }
-.adm-scard.sc-warning { border-top-color: var(--adm-warning); }
-.adm-scard.sc-danger  { border-top-color: var(--adm-danger); }
-.adm-scard .sc-lbl  { font-size: .75rem; color: #64748b; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
-.adm-scard .sc-val  { font-size: 1.65rem; font-weight: 800; margin-top: 6px; color: var(--adm-dark); line-height: 1.1; }
-.adm-scard .sc-ico  { position: absolute; left: 16px; top: 16px; font-size: 2.2rem; opacity: .08; }
+.ref-stat.s-green { border-left-color: var(--rg); }
+.ref-stat.s-amber { border-left-color: var(--ra); }
+.ref-stat.s-red   { border-left-color: var(--rr); }
+.ref-stat .st-lbl {
+    font-size: .7rem; font-weight: 600; color: var(--rm);
+    text-transform: uppercase; letter-spacing: .04em; margin-bottom: 5px;
+}
+.ref-stat .st-val { font-size: 1.4rem; font-weight: 800; color: var(--rd); line-height: 1.1; }
 
-/* ===== SETTINGS PANEL ===== */
-.adm-settings-panel {
-    background: var(--adm-card);
-    border-radius: 16px;
-    box-shadow: 0 1px 8px rgba(0,0,0,.08);
-    margin-bottom: 28px;
+/* Cards */
+.ref-card {
+    background: #fff;
+    border: 1px solid var(--rb);
+    border-radius: 12px;
+    margin-bottom: 20px;
     overflow: hidden;
-    border: 1px solid var(--adm-border);
 }
-.adm-settings-header {
-    background: linear-gradient(90deg, #1e2a3a 0%, #2d3f6b 100%);
-    padding: 16px 24px;
+.ref-card-hdr {
+    padding: 12px 18px;
+    background: var(--rs);
+    border-bottom: 1px solid var(--rb);
     display: flex;
     align-items: center;
     justify-content: space-between;
-    cursor: pointer;
-    user-select: none;
-}
-.adm-settings-header h4 {
-    margin: 0;
-    color: #fff;
-    font-weight: 700;
-    font-size: .97rem;
-    display: flex;
-    align-items: center;
     gap: 8px;
 }
-.adm-settings-header .toggle-icon {
-    color: rgba(255,255,255,.7);
-    font-size: .85rem;
-    transition: transform .2s;
+.ref-card-hdr.clickable { cursor: pointer; user-select: none; }
+.ref-card-hdr h3 {
+    margin: 0;
+    font-size: .88rem;
+    font-weight: 700;
+    color: var(--rd);
+    display: flex;
+    align-items: center;
+    gap: 7px;
 }
-.adm-settings-header.open .toggle-icon { transform: rotate(180deg); }
-.adm-settings-body {
-    padding: 24px;
-    display: none;
+.hdr-badge {
+    background: var(--rp); color: #fff;
+    font-size: .68rem; font-weight: 700;
+    padding: 2px 8px; border-radius: 20px;
 }
-.adm-settings-body.open { display: block; }
-.adm-settings-grid {
+.hdr-badge.ba { background: var(--ra); }
+.ref-card-body { padding: 18px; }
+.ref-caret { font-size: .78rem; color: var(--rm); transition: transform .2s; }
+.ref-caret.open { transform: rotate(180deg); }
+.ref-collapse { display: none; }
+.ref-collapse.open { display: block; }
+
+/* Settings grid */
+.ref-settings-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-    gap: 20px;
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 16px;
     align-items: end;
 }
-.adm-field { display: flex; flex-direction: column; gap: 6px; }
-.adm-field label {
-    font-size: .82rem;
-    font-weight: 700;
-    color: #374151;
-}
-.adm-field .field-hint {
-    font-size: .75rem;
-    color: #94a3b8;
-    margin-top: 2px;
-}
-.adm-input {
-    padding: 10px 14px;
-    border: 1.5px solid var(--adm-border);
-    border-radius: 10px;
-    font-size: .95rem;
-    color: var(--adm-dark);
-    background: #f8fafc;
+.ref-field { display: flex; flex-direction: column; gap: 5px; }
+.ref-field label { font-size: .8rem; font-weight: 700; color: #374151; }
+.ref-fhint { font-size: .72rem; color: var(--rm); }
+.ref-input {
+    padding: 8px 12px;
+    border: 1.5px solid var(--rb);
+    border-radius: 8px;
+    font-size: .9rem;
+    color: var(--rd);
+    background: var(--rs);
     transition: border-color .15s;
     font-weight: 600;
 }
-.adm-input:focus { outline: none; border-color: var(--adm-primary); background: #fff; }
+.ref-input:focus { outline: none; border-color: var(--rp); background: #fff; }
 
-/* ===== SECTION HEADER ===== */
-.adm-section-hdr {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 12px;
-}
-.adm-section-hdr h4 {
-    font-size: 1rem;
+/* Table */
+.ref-tbl { width: 100%; border-collapse: collapse; }
+.ref-tbl thead th {
+    padding: 10px 14px;
+    background: var(--rs);
+    font-size: .69rem;
     font-weight: 700;
-    color: var(--adm-dark);
-    margin: 0;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-.adm-section-hdr .badge-count {
-    background: var(--adm-primary);
-    color: #fff;
-    font-size: .72rem;
-    font-weight: 700;
-    padding: 2px 9px;
-    border-radius: 20px;
-}
-
-/* ===== MARKETERS TABLE ===== */
-.adm-table-wrap {
-    background: var(--adm-card);
-    border-radius: 16px;
-    box-shadow: 0 1px 8px rgba(0,0,0,.08);
-    overflow: hidden;
-    margin-bottom: 28px;
-    border: 1px solid var(--adm-border);
-}
-.adm-table-wrap table {
-    width: 100%;
-    border-collapse: collapse;
-}
-.adm-table-wrap thead th {
-    background: var(--adm-dark);
-    color: #fff;
-    font-size: .75rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: .05em;
-    padding: 14px 16px;
-    white-space: nowrap;
-}
-.adm-table-wrap tbody tr { transition: background .12s; }
-.adm-table-wrap tbody tr:hover { background: #f8faff; }
-.adm-table-wrap tbody td {
-    padding: 14px 16px;
-    border-bottom: 1px solid #f1f5f9;
-    vertical-align: middle;
-    font-size: .88rem;
-    color: #334155;
-}
-.adm-table-wrap tbody tr:last-child td { border-bottom: none; }
-
-/* ===== USER INFO ===== */
-.u-info { display: flex; flex-direction: column; gap: 2px; }
-.u-info .u-name  { font-weight: 700; color: var(--adm-dark); font-size: .92rem; }
-.u-info .u-email { font-size: .76rem; color: #94a3b8; }
-
-/* ===== BADGES ===== */
-.adm-badge {
-    display: inline-block;
-    padding: 3px 10px;
-    border-radius: 20px;
-    font-size: .74rem;
-    font-weight: 700;
-}
-.badge-blue   { background: #dbeafe; color: #1d4ed8; }
-.badge-green  { background: #d1fae5; color: #065f46; }
-.badge-amber  { background: #fef3c7; color: #92400e; }
-.badge-red    { background: #fee2e2; color: #991b1b; }
-.badge-purple { background: #ede9fe; color: #5b21b6; }
-.badge-gray   { background: #f1f5f9; color: #475569; }
-
-/* ===== COMMISSION FORM ===== */
-.comm-form { display: flex; gap: 6px; align-items: center; }
-.comm-form input[type=number] {
-    width: 78px;
-    padding: 6px 8px;
-    border: 1.5px solid var(--adm-border);
-    border-radius: 8px;
-    font-size: .88rem;
-    font-weight: 700;
-    color: var(--adm-dark);
-    text-align: center;
-}
-.comm-form input[type=number]:focus { outline: none; border-color: var(--adm-primary); }
-
-/* ===== STAT MINI ===== */
-.stat-mini { display: flex; flex-direction: column; gap: 4px; min-width: 120px; }
-.stat-mini .sr { display: flex; justify-content: space-between; align-items: center; gap: 6px; font-size: .79rem; }
-.stat-mini .sr-lbl { color: #94a3b8; font-weight: 500; }
-.stat-mini .sr-val { font-weight: 800; font-size: .82rem; }
-.sr-val.v-pending  { color: #b45309; }
-.sr-val.v-approved { color: #065f46; }
-.sr-val.v-paid     { color: #1d4ed8; }
-
-/* ===== TOTAL COMMISSION DISPLAY ===== */
-.total-comm {
-    font-size: 1.05rem;
-    font-weight: 800;
-    color: var(--adm-dark);
-    margin-bottom: 4px;
-}
-.total-comm-label {
-    font-size: .72rem;
-    color: #94a3b8;
+    color: var(--rm);
     text-transform: uppercase;
     letter-spacing: .04em;
-}
-
-/* ===== BUTTONS ===== */
-.btn-adm {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    padding: 7px 14px;
-    border-radius: 8px;
-    font-size: .8rem;
-    font-weight: 600;
-    border: none;
-    cursor: pointer;
-    text-decoration: none;
-    transition: filter .15s, transform .1s;
+    border-bottom: 2px solid var(--rb);
     white-space: nowrap;
-    line-height: 1.3;
 }
-.btn-adm:hover { filter: brightness(.9); transform: translateY(-1px); text-decoration: none; }
-.btn-adm:active { transform: none; }
-.btn-primary  { background: var(--adm-primary); color: #fff; }
-.btn-success  { background: var(--adm-success); color: #fff; }
-.btn-warning  { background: var(--adm-warning); color: #fff; }
-.btn-danger   { background: var(--adm-danger);  color: #fff; }
-.btn-dark     { background: var(--adm-dark);    color: #fff; }
-.btn-outline  { background: transparent; border: 1.5px solid var(--adm-border); color: #475569; }
-.btn-sm       { padding: 5px 11px; font-size: .76rem; }
+.ref-tbl tbody td {
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--rb);
+    font-size: .86rem;
+    color: #334155;
+    vertical-align: middle;
+}
+.ref-tbl tbody tr:last-child td { border-bottom: none; }
+.ref-tbl tbody tr:hover td { background: #f8faff; }
 
-/* ===== WITHDRAWALS SECTION ===== */
-.wr-wrap {
-    background: var(--adm-card);
-    border-radius: 16px;
-    box-shadow: 0 1px 8px rgba(0,0,0,.08);
-    overflow: hidden;
-    margin-bottom: 28px;
-    border: 1px solid var(--adm-border);
-}
-.wr-header {
-    background: linear-gradient(90deg, #d97706 0%, #b45309 100%);
-    padding: 16px 24px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-}
-.wr-header h4 { margin: 0; font-weight: 700; color: #fff; font-size: 1rem; display: flex; align-items: center; gap: 8px; }
-.wr-count { background: rgba(255,255,255,.25); color: #fff; font-weight: 800; font-size: .83rem; padding: 3px 10px; border-radius: 20px; }
+/* User cell */
+.u-name  { font-weight: 700; color: var(--rd); font-size: .89rem; }
+.u-email { font-size: .73rem; color: var(--rm); }
 
-/* ===== EMPTY STATE ===== */
-.empty-state {
-    text-align: center;
-    padding: 52px 20px;
-    color: #94a3b8;
-}
-.empty-state .es-icon { font-size: 2.8rem; margin-bottom: 12px; opacity: .5; }
-.empty-state p { font-size: .93rem; margin: 0; }
+/* Badges */
+.rb { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: .7rem; font-weight: 700; }
+.rb-blue  { background: #dbeafe; color: #1d4ed8; }
+.rb-green { background: #d1fae5; color: #065f46; }
+.rb-gray  { background: #f1f5f9; color: #475569; }
 
-/* ===== REFERRED COUNT ===== */
-.referred-count {
-    text-align: center;
+/* Commission inline form */
+.comm-form { display: flex; gap: 5px; align-items: center; }
+.comm-form input[type=number] {
+    width: 68px; padding: 5px 7px;
+    border: 1.5px solid var(--rb); border-radius: 6px;
+    font-size: .86rem; font-weight: 700; color: var(--rd); text-align: center;
 }
-.referred-count .rc-num { font-size: 1.4rem; font-weight: 800; color: var(--adm-primary); line-height: 1; }
-.referred-count .rc-lbl { font-size: .7rem; color: #94a3b8; text-transform: uppercase; letter-spacing: .04em; }
+.comm-form input[type=number]:focus { outline: none; border-color: var(--rp); }
 
-/* ===== RESPONSIVE ===== */
+/* Stats mini */
+.stat-mini { display: flex; flex-direction: column; gap: 3px; min-width: 108px; }
+.sm-row { display: flex; justify-content: space-between; gap: 5px; font-size: .76rem; }
+.sm-lbl { color: var(--rm); }
+.sm-val { font-weight: 700; }
+.sm-pending  { color: #b45309; }
+.sm-approved { color: #059669; }
+.sm-paid     { color: #1d4ed8; }
+
+/* Referred count */
+.ref-num { font-size: 1.2rem; font-weight: 800; color: var(--rp); text-align: center; line-height: 1; }
+.ref-num-lbl { font-size: .67rem; color: var(--rm); text-transform: uppercase; text-align: center; }
+
+/* Buttons */
+.ref-btn {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 6px 11px; border-radius: 7px; font-size: .77rem; font-weight: 600;
+    border: none; cursor: pointer; text-decoration: none;
+    transition: opacity .15s; white-space: nowrap; line-height: 1.3;
+}
+.ref-btn:hover { opacity: .82; text-decoration: none; }
+.btn-p { background: var(--rp);  color: #fff; }
+.btn-g { background: var(--rg);  color: #fff; }
+.btn-r { background: var(--rr);  color: #fff; }
+.btn-o { background: transparent; border: 1px solid var(--rb); color: var(--rm); }
+
+/* Empty state */
+.ref-empty { text-align: center; padding: 40px 20px; color: var(--rm); }
+.ref-empty .re-icon { font-size: 2.2rem; margin-bottom: 10px; opacity: .4; }
+.ref-empty p { font-size: .9rem; margin: 0; }
+
+/* Modal */
+.ref-modal-overlay {
+    display: none; position: fixed; inset: 0; z-index: 9999;
+    background: rgba(0,0,0,.4); align-items: center; justify-content: center;
+}
+.ref-modal {
+    background: #fff; border-radius: 12px;
+    max-width: 440px; width: 92%;
+    box-shadow: 0 8px 24px rgba(0,0,0,.16); overflow: hidden;
+}
+.ref-modal-hdr {
+    padding: 15px 18px;
+    border-bottom: 1px solid var(--rb);
+    background: var(--rs);
+}
+.ref-modal-hdr h4 { margin: 0; font-size: .92rem; font-weight: 700; color: var(--rd); }
+.ref-modal-hdr p  { margin: 4px 0 0; font-size: .8rem; color: var(--rm); }
+.ref-modal-body   { padding: 18px; }
+.ref-modal-footer {
+    padding: 12px 18px;
+    border-top: 1px solid var(--rb);
+    display: flex; gap: 8px; justify-content: flex-end;
+}
+
 @media (max-width: 768px) {
-    .adm-summary { grid-template-columns: 1fr 1fr; }
-    .adm-table-wrap { overflow-x: auto; }
-    .adm-settings-grid { grid-template-columns: 1fr; }
+    .ref-stats { grid-template-columns: 1fr 1fr; }
+    .ref-tbl-scroll { overflow-x: auto; }
 }
 </style>
 
 <?php
-/* ===== PAGE HEADER ===== */
-echo '
-<div class="adm-page-header">
-    <div>
-        <h1>&#x1F4CA; إدارة المسوقين</h1>
-        <p>متابعة المسوقين النشطين، إدارة العمولات وطلبات السحب، وضبط إعدادات البرنامج.</p>
-    </div>
-    <div style="font-size:3rem;opacity:.2;">&#x1F91D;</div>
-</div>';
+$base_out = $base_url->out(false);
 
-/* ===== SUMMARY CARDS ===== */
-echo '<div class="adm-summary">';
-$summary_items = [
-    ['المسوقون النشطون',   $total_marketers,                  'primary', '&#x1F464;'],
-    ['إجمالي العمولات',    number_format($total_all, 2),      '',        '&#x1F4B0;'],
-    ['عمولات معتمدة',      number_format($total_approved, 2), 'sc-success', '&#x2705;'],
-    ['تم دفعها',           number_format($total_paid, 2),     'sc-info',  '&#x1F4B8;'],
-    ['طلبات سحب معلقة',    $pending_withdrawals_count,        'sc-danger','&#x23F3;'],
-];
-foreach ($summary_items as [$lbl, $val, $cls, $icon]) {
-    echo "
-    <div class=\"adm-scard {$cls}\">
-        <div class=\"sc-lbl\">{$lbl}</div>
-        <div class=\"sc-val\">{$val}</div>
-        <div class=\"sc-ico\">{$icon}</div>
-    </div>";
+echo '<div class="ref-wrap">';
+
+/* ── Stats row ── */
+echo '<div class="ref-stats">';
+foreach ([
+    ['المسوقون',           $total_marketers,                  ''],
+    ['إجمالي العمولات',   number_format($total_all, 2),      ''],
+    ['معلقة (غير مدفوعة)', number_format($total_approved, 2), 's-amber'],
+    ['مدفوعة',             number_format($total_paid, 2),     's-green'],
+    ['طلبات سحب معلقة',  $pending_withdrawals_count,        's-red'],
+] as [$lbl, $val, $cls]) {
+    echo "<div class=\"ref-stat {$cls}\"><div class=\"st-lbl\">{$lbl}</div><div class=\"st-val\">{$val}</div></div>";
 }
 echo '</div>';
 
-/* ===== SETTINGS PANEL ===== */
-$settings_url = (new moodle_url('/local/referral/admin/manage.php'))->out(false);
+/* ── Settings card (collapsible) ── */
 echo '
-<div class="adm-settings-panel">
-    <div class="adm-settings-header" id="settingsToggle" onclick="toggleSettings()">
-        <h4>&#x2699;&#xFE0F; إعدادات برنامج التسويق</h4>
-        <span class="toggle-icon" id="settingsArrow">&#x25BC;</span>
+<div class="ref-card">
+    <div class="ref-card-hdr clickable" onclick="toggleCollapse(\'refCfg\',\'refCfgCaret\')">
+        <h3>الإعدادات</h3>
+        <span class="ref-caret" id="refCfgCaret">&#x25BC;</span>
     </div>
-    <div class="adm-settings-body" id="settingsBody">
-        <form method="post" action="' . $settings_url . '">
-            <input type="hidden" name="action"  value="savesettings">
-            <input type="hidden" name="sesskey" value="' . sesskey() . '">
-            <div class="adm-settings-grid">
-                <div class="adm-field">
-                    <label for="min_wd">&#x1F4B3; الحد الأدنى لطلب السحب</label>
-                    <input type="number" id="min_wd" name="min_withdrawal" class="adm-input"
-                           value="' . number_format($min_withdrawal, 2, '.', '') . '"
-                           min="0" step="0.01" required>
-                    <span class="field-hint">أقل مبلغ يمكن للمسوق طلب سحبه</span>
+    <div class="ref-collapse" id="refCfg">
+        <div class="ref-card-body">
+            <form method="post" action="' . $base_out . '">
+                <input type="hidden" name="action"  value="savesettings">
+                <input type="hidden" name="sesskey" value="' . $sess . '">
+                <div class="ref-settings-grid">
+                    <div class="ref-field">
+                        <label for="minWd">الحد الأدنى للسحب</label>
+                        <input type="number" id="minWd" name="min_withdrawal" class="ref-input"
+                               value="' . number_format($min_withdrawal, 2, '.', '') . '"
+                               min="0" step="0.01" required>
+                        <span class="ref-fhint">أقل مبلغ يمكن للمسوق طلبه</span>
+                    </div>
+                    <div class="ref-field">
+                        <label for="defComm">نسبة العمولة الافتراضية (%)</label>
+                        <input type="number" id="defComm" name="default_commission" class="ref-input"
+                               value="' . $def_commission . '"
+                               min="0" max="100" step="1" required>
+                        <span class="ref-fhint">تُطبَّق تلقائياً على المسوق عند التسجيل</span>
+                    </div>
+                    <div class="ref-field" style="justify-content:flex-end;">
+                        <button type="submit" class="ref-btn btn-p" style="padding:9px 20px;">حفظ الإعدادات</button>
+                    </div>
                 </div>
-                <div class="adm-field">
-                    <label for="def_comm">&#x1F4CA; نسبة العمولة الافتراضية (%)</label>
-                    <input type="number" id="def_comm" name="default_commission" class="adm-input"
-                           value="' . $def_commission . '"
-                           min="0" max="100" step="1" required>
-                    <span class="field-hint">تُطبَّق تلقائياً على المسوق عند تفعيل حسابه</span>
-                </div>
-                <div class="adm-field" style="justify-content:flex-end;">
-                    <button type="submit" class="btn-adm btn-dark" style="width:100%;justify-content:center;padding:11px;">
-                        &#x1F4BE; حفظ الإعدادات
-                    </button>
-                </div>
-            </div>
-        </form>
+            </form>
+        </div>
     </div>
-</div>
-<script>
-function toggleSettings() {
-    var body   = document.getElementById("settingsBody");
-    var header = document.getElementById("settingsToggle");
-    var arrow  = document.getElementById("settingsArrow");
-    var open   = body.classList.toggle("open");
-    header.classList.toggle("open", open);
-    arrow.innerHTML = open ? "&#x25B2;" : "&#x25BC;";
-}
-</script>';
-
-/* ===== MARKETERS TABLE ===== */
-echo '
-<div class="adm-section-hdr">
-    <h4>&#x1F4CB; قائمة المسوقين النشطين
-        <span class="badge-count">' . $total_marketers . '</span>
-    </h4>
 </div>';
 
-echo '<div class="adm-table-wrap">';
+/* ── Marketers table ── */
+echo '
+<div class="ref-card">
+    <div class="ref-card-hdr">
+        <h3>قائمة المسوقين <span class="hdr-badge">' . $total_marketers . '</span></h3>
+    </div>';
+
 if (empty($marketers)) {
     echo '
-    <div class="empty-state">
-        <div class="es-icon">&#x1F465;</div>
-        <p>لا يوجد مسوقون مفعَّلون حتى الآن.<br>
-           سيظهر المسوق هنا بعد تفعيل حسابه عبر رابط التسويق.</p>
+    <div class="ref-empty">
+        <div class="re-icon">&#x1F465;</div>
+        <p>لا يوجد مسوقون مسجلون بعد.</p>
     </div>';
 } else {
-    echo '
-    <div style="overflow-x:auto;">
-    <table>
-        <thead>
-            <tr>
-                <th style="text-align:right;">المسوق</th>
-                <th>كود الإحالة</th>
-                <th style="text-align:center;">المُحالون</th>
-                <th>نسبة العمولة</th>
-                ' . ($enable_parent ? '<th>المسوق الأب</th>' : '') . '
-                <th>إجمالي العمولات</th>
-                <th>تفاصيل العمولات</th>
-                <th style="text-align:center;">الإجراءات</th>
-            </tr>
-        </thead>
-        <tbody>';
+    echo '<div class="ref-tbl-scroll"><table class="ref-tbl"><thead><tr>
+        <th>المسوق</th>
+        <th>الكود</th>
+        <th style="text-align:center;">المُحالون</th>
+        <th>العمولة %</th>';
+    if ($enable_parent) {
+        echo '<th>المسوق الأب</th>';
+    }
+    echo '<th>الإجمالي</th>
+        <th>تفاصيل</th>
+        <th style="text-align:center;">الإجراءات</th>
+    </tr></thead><tbody>';
 
     foreach ($marketers as $m) {
-        $st       = $stats[$m->id];
+        $st       = $stats[$m->userid];
+        $name_raw = trim(($m->firstname ?? '') . ' ' . ($m->lastname ?? ''));
+        $fullname = htmlspecialchars($name_raw !== '' ? $name_raw : '(حساب محذوف #' . $m->userid . ')');
+        $email    = htmlspecialchars($m->email ?? '—');
         $refurl   = (new moodle_url('/', ['ref' => $m->code]))->out(false);
-        $fullname = htmlspecialchars(trim($m->firstname . ' ' . $m->lastname));
-        $email    = htmlspecialchars($m->email ?? '');
 
-        /* Commission form */
         $comm_form = '
-        <form method="post" action="' . $base_url->out(false) . '" class="comm-form">
+        <form method="post" action="' . $base_out . '" class="comm-form">
             <input type="hidden" name="action"     value="setcommission">
-            <input type="hidden" name="marketerid" value="' . $m->id . '">
-            <input type="hidden" name="sesskey"    value="' . sesskey() . '">
-            <input type="number" name="commission" value="' . (int)$m->commission_percentage . '"
-                   min="0" max="100" title="نسبة العمولة %">
-            <button type="submit" class="btn-adm btn-primary btn-sm" title="حفظ النسبة">&#x1F4BE;</button>
+            <input type="hidden" name="marketerid" value="' . $m->userid . '">
+            <input type="hidden" name="sesskey"    value="' . $sess . '">
+            <input type="number" name="commission" value="' . (int)$m->commission_percentage . '" min="0" max="100">
+            <button type="submit" class="ref-btn btn-p" title="حفظ">&#x2713;</button>
         </form>';
 
-        /* Parent cell */
         $parent_cell = '';
         if ($enable_parent) {
-            $current_parent_name = !empty($m->parentname)
-                ? '<span class="adm-badge badge-purple" style="margin-bottom:4px;display:inline-block;">'
-                  . htmlspecialchars($m->parentname) . ' (' . htmlspecialchars($m->parentcode ?? '') . ')</span><br>'
-                : '<span style="color:#94a3b8;font-size:.78rem;">— بدون أب —</span><br>';
+            $pname = (!empty($m->parentfirstname) || !empty($m->parentlastname))
+                ? htmlspecialchars(trim(($m->parentfirstname ?? '') . ' ' . ($m->parentlastname ?? '')))
+                  . ' <span class="rb rb-gray">(' . htmlspecialchars($m->parentcode ?? '') . ')</span>'
+                : '<span style="color:var(--rm);font-size:.78rem;">—</span>';
 
-            $options = '<option value="0"' . (empty($m->parent_id) ? ' selected' : '') . '>— بدون أب —</option>';
+            $options = '<option value="0"' . (empty($m->parent_userid) ? ' selected' : '') . '>— بدون أب —</option>';
             foreach ($all_marketers as $pm) {
-                if ($pm->id == $m->id) continue;
-                $sel = (!empty($m->parent_id) && $m->parent_id == $pm->id) ? ' selected' : '';
-                $options .= '<option value="' . $pm->id . '"' . $sel . '>'
-                          . htmlspecialchars($pm->name) . ' (' . htmlspecialchars($pm->code) . ')</option>';
+                if ($pm->userid == $m->userid) continue;
+                $sel = (!empty($m->parent_userid) && $m->parent_userid == $pm->userid) ? ' selected' : '';
+                $options .= '<option value="' . $pm->userid . '"' . $sel . '>'
+                          . htmlspecialchars(trim($pm->firstname . ' ' . $pm->lastname))
+                          . ' (' . htmlspecialchars($pm->code) . ')</option>';
             }
 
             $parent_cell = '
             <td>
-                ' . $current_parent_name . '
-                <form method="post" action="' . $base_url->out(false) . '" style="display:flex;gap:4px;align-items:center;margin-top:4px;">
+                <div style="margin-bottom:5px;font-size:.82rem;">' . $pname . '</div>
+                <form method="post" action="' . $base_out . '" style="display:flex;gap:4px;">
                     <input type="hidden" name="action"     value="setparent">
-                    <input type="hidden" name="marketerid" value="' . $m->id . '">
-                    <input type="hidden" name="sesskey"    value="' . sesskey() . '">
-                    <select name="parentid" class="adm-input" style="padding:4px 6px;font-size:.78rem;min-width:120px;">
+                    <input type="hidden" name="marketerid" value="' . $m->userid . '">
+                    <input type="hidden" name="sesskey"    value="' . $sess . '">
+                    <select name="parentid" class="ref-input" style="padding:4px 7px;font-size:.77rem;min-width:110px;">
                         ' . $options . '
                     </select>
-                    <button type="submit" class="btn-adm btn-primary btn-sm" title="حفظ الأب">&#x1F4BE;</button>
+                    <button type="submit" class="ref-btn btn-p" title="حفظ">&#x2713;</button>
                 </form>
             </td>';
         }
 
-        /* Stats mini */
+        $owed     = $st['pending'] + $st['approved'];
+        $net_owed = max(0.0, $owed - $st['wd_paid']); // pending commissions minus already paid via withdrawal
         $stats_html = '
         <div class="stat-mini">
-            <div class="sr">
-                <span class="sr-lbl">انتظار:</span>
-                <span class="sr-val v-pending">' . number_format($st['pending'], 2) . '</span>
-            </div>
-            <div class="sr">
-                <span class="sr-lbl">معتمد:</span>
-                <span class="sr-val v-approved">' . number_format($st['approved'], 2) . '</span>
-            </div>
-            <div class="sr">
-                <span class="sr-lbl">مدفوع:</span>
-                <span class="sr-val v-paid">' . number_format($st['paid'], 2) . '</span>
-            </div>
+            <div class="sm-row"><span class="sm-lbl">المستحق</span><span class="sm-val sm-pending">'  . number_format($net_owed, 2) . '</span></div>
+            <div class="sm-row"><span class="sm-lbl">مدفوع</span><span class="sm-val sm-paid">'        . number_format($st['paid'], 2) . '</span></div>
         </div>';
 
-        /* Pay button */
         $pay_btn = '';
-        if ($st['approved'] > 0) {
+        if ($net_owed > 0) {
             $pay_url = (new moodle_url('/local/referral/admin/manage.php', [
-                'action' => 'pay', 'marketerid' => $m->id, 'sesskey' => sesskey()
+                'action' => 'pay', 'marketerid' => $m->userid, 'sesskey' => $sess,
             ]))->out(false);
             $pay_btn = '
-            <a href="' . $pay_url . '"
-               class="btn-adm btn-success btn-sm"
-               onclick="return confirm(\'تأكيد دفع العمولات المعتمدة ('. number_format($st['approved'], 2) .') للمسوق ' . addslashes($fullname) . '؟\')">
-                &#x1F4B3; دفع (' . number_format($st['approved'], 2) . ')
+            <a href="' . $pay_url . '" class="ref-btn btn-g"
+               onclick="return confirm(\'تسجيل دفع ' . number_format($net_owed, 2) . ' للمسوق ' . addslashes($fullname) . '؟\')">
+                دفع (' . number_format($net_owed, 2) . ')
             </a>';
         }
 
-        /* Delete button */
         $del_url = (new moodle_url('/local/referral/admin/manage.php', [
-            'delete' => $m->id, 'sesskey' => sesskey()
+            'delete' => $m->userid, 'sesskey' => $sess,
         ]))->out(false);
 
         echo '
         <tr>
             <td>
-                <div class="u-info">
-                    <span class="u-name">' . $fullname . '</span>
-                    <span class="u-email">' . $email . '</span>
-                </div>
+                <div class="u-name">' . $fullname . '</div>
+                <div class="u-email">' . $email . '</div>
             </td>
+            <td><span class="rb rb-blue">' . htmlspecialchars($m->code) . '</span></td>
             <td>
-                <span class="adm-badge badge-blue">' . htmlspecialchars($m->code) . '</span>
-            </td>
-            <td>
-                <div class="referred-count">
-                    <div class="rc-num">' . $st['referred'] . '</div>
-                    <div class="rc-lbl">مستخدم</div>
-                </div>
+                <div class="ref-num">' . $st['referred'] . '</div>
+                <div class="ref-num-lbl">مستخدم</div>
             </td>
             <td>' . $comm_form . '</td>
             ' . $parent_cell . '
-            <td>
-                <div class="total-comm">' . number_format($st['total'], 2) . '</div>
-                <div class="total-comm-label">إجمالي كل الوقت</div>
-            </td>
+            <td style="font-weight:700;color:var(--rd);">' . number_format($st['total'], 2) . '</td>
             <td>' . $stats_html . '</td>
             <td>
-                <div style="display:flex;flex-wrap:wrap;gap:6px;justify-content:center;">
+                <div style="display:flex;flex-wrap:wrap;gap:5px;justify-content:center;">
                     ' . $pay_btn . '
-                    <button type="button" class="btn-adm btn-outline btn-sm"
+                    <button type="button" class="ref-btn btn-o"
                         onclick="navigator.clipboard.writeText(\'' . addslashes($refurl) . '\').then(()=>{
-                            this.textContent=\'&#x2713; تم النسخ\';
-                            setTimeout(()=>this.innerHTML=\'&#x1F517; رابط\',2000);
-                        })">
-                        &#x1F517; رابط
-                    </button>
-                    <a href="' . $del_url . '" class="btn-adm btn-danger btn-sm"
-                       onclick="return confirm(\'حذف المسوق ' . addslashes($fullname) . '؟ لا يمكن التراجع.\')">
-                        &#x1F5D1; حذف
-                    </a>
+                            this.textContent=\'تم النسخ\';
+                            setTimeout(()=>this.textContent=\'نسخ الرابط\',2200);
+                        })">نسخ الرابط</button>
+                    <a href="' . $del_url . '" class="ref-btn btn-r"
+                       onclick="return confirm(\'حذف المسوق ' . addslashes($fullname) . '؟\')">حذف</a>
                 </div>
             </td>
         </tr>';
     }
 
-    echo '
-        </tbody>
-    </table>
-    </div>';
+    echo '</tbody></table></div>';
 }
 echo '</div>';
 
-/* ===== PENDING WITHDRAWALS ===== */
+/* ── Pending withdrawals ── */
 echo '
-<div class="wr-wrap">
-    <div class="wr-header">
-        <h4>&#x1F4E4; طلبات السحب المعلقة</h4>
-        <span class="wr-count">' . count($pending_withdrawals) . ' طلب</span>
+<div class="ref-card">
+    <div class="ref-card-hdr">
+        <h3>طلبات السحب المعلقة <span class="hdr-badge ba">' . count($pending_withdrawals) . '</span></h3>
     </div>';
 
 if (empty($pending_withdrawals)) {
     echo '
-    <div class="empty-state" style="padding:36px 20px;">
-        <div class="es-icon">&#x1F4EC;</div>
+    <div class="ref-empty" style="padding:30px 20px;">
+        <div class="re-icon">&#x1F4EC;</div>
         <p>لا توجد طلبات سحب معلقة حالياً.</p>
     </div>';
 } else {
     echo '
-    <div style="overflow-x:auto;">
-    <table style="width:100%;border-collapse:collapse;">
-        <thead>
-            <tr style="background:#f8fafc;">
-                <th style="padding:12px 16px;font-size:.75rem;font-weight:700;color:#475569;text-align:right;border-bottom:2px solid #e2e8f0;">المسوق</th>
-                <th style="padding:12px 16px;font-size:.75rem;font-weight:700;color:#475569;border-bottom:2px solid #e2e8f0;">الكود</th>
-                <th style="padding:12px 16px;font-size:.75rem;font-weight:700;color:#475569;text-align:center;border-bottom:2px solid #e2e8f0;">المبلغ المطلوب</th>
-                <th style="padding:12px 16px;font-size:.75rem;font-weight:700;color:#475569;border-bottom:2px solid #e2e8f0;">تاريخ الطلب</th>
-                <th style="padding:12px 16px;font-size:.75rem;font-weight:700;color:#475569;text-align:center;border-bottom:2px solid #e2e8f0;">الإجراء</th>
-            </tr>
-        </thead>
-        <tbody>';
+    <div class="ref-tbl-scroll"><table class="ref-tbl"><thead><tr>
+        <th>المسوق</th>
+        <th>الكود</th>
+        <th>المبلغ</th>
+        <th>التاريخ</th>
+        <th style="text-align:center;">الإجراء</th>
+    </tr></thead><tbody>';
 
     foreach ($pending_withdrawals as $wr) {
-        $wname   = htmlspecialchars(trim($wr->firstname . ' ' . $wr->lastname) ?: '');
+        $wname = htmlspecialchars(
+            trim(($wr->firstname ?? '') . ' ' . ($wr->lastname ?? '')) ?: '(محذوف #' . $wr->marketerid . ')'
+        );
         $rej_url = (new moodle_url('/local/referral/admin/manage.php', [
-            'action' => 'rejectwithdrawal', 'wid' => $wr->id, 'sesskey' => sesskey()
+            'action' => 'rejectwithdrawal', 'wid' => $wr->id, 'sesskey' => $sess,
         ]))->out(false);
-        $modal_id = 'payModal_' . $wr->id;
 
         echo '
-        <tr style="border-bottom:1px solid #f1f5f9;transition:background .12s;" onmouseover="this.style.background=\'#f8faff\'" onmouseout="this.style.background=\'\'">
-            <td style="padding:14px 16px;font-weight:700;color:#1e2a3a;">' . $wname . '</td>
-            <td style="padding:14px 16px;">
-                <span class="adm-badge badge-blue">' . htmlspecialchars($wr->code) . '</span>
-            </td>
-            <td style="padding:14px 16px;text-align:center;">
-                <span style="font-size:1.1rem;font-weight:800;color:#059669;">' . number_format($wr->amount, 2) . '</span>
-            </td>
-            <td style="padding:14px 16px;font-size:.82rem;color:#94a3b8;">'
-                . userdate($wr->timecreated, '%d/%m/%Y %H:%M') . '
-            </td>
-            <td style="padding:14px 16px;text-align:center;">
-                <div style="display:flex;gap:8px;justify-content:center;">
-                    <button type="button" class="btn-adm btn-success btn-sm"
-                            onclick="openPayModal(' . (int)$wr->id . ', \'' . addslashes($wname) . '\', \'' . number_format($wr->amount, 2) . '\')">
-                        &#x2705; قبول الدفع
+        <tr>
+            <td style="font-weight:700;color:var(--rd);">' . $wname . '</td>
+            <td><span class="rb rb-blue">' . htmlspecialchars($wr->code) . '</span></td>
+            <td style="font-weight:800;color:var(--rg);">' . number_format($wr->amount, 2) . '</td>
+            <td style="color:var(--rm);font-size:.8rem;">' . userdate($wr->timecreated, '%d/%m/%Y %H:%M') . '</td>
+            <td style="text-align:center;">
+                <div style="display:flex;gap:6px;justify-content:center;">
+                    <button type="button" class="ref-btn btn-g"
+                            onclick="openPayModal(' . (int)$wr->id . ',\'' . addslashes($wname) . '\',\'' . number_format($wr->amount, 2) . '\')">
+                        قبول الدفع
                     </button>
-                    <a href="' . $rej_url . '"
-                       class="btn-adm btn-danger btn-sm"
-                       onclick="return confirm(\'رفض طلب السحب؟\')">
-                        &#x274C; رفض
-                    </a>
+                    <a href="' . $rej_url . '" class="ref-btn btn-r"
+                       onclick="return confirm(\'رفض طلب السحب؟\')">رفض</a>
                 </div>
             </td>
         </tr>';
     }
 
-    echo '
-        </tbody>
-    </table>
-    </div>';
+    echo '</tbody></table></div>';
 }
 echo '</div>';
 
-/* ===== PAYMENT MODAL ===== */
-$manage_url = (new moodle_url('/local/referral/admin/manage.php'))->out(false);
+/* ── Payment history (paid + rejected withdrawals) ── */
+$wd_status_labels = [1 => ['مدفوع', 'rb-paid'], 2 => ['مرفوض', 'rb-rejected']];
+
 echo '
-<div id="payWithdrawalModal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.5);align-items:center;justify-content:center;">
-    <div style="background:#fff;border-radius:16px;max-width:480px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,.2);overflow:hidden;">
-        <div style="background:linear-gradient(135deg,#059669,#047857);padding:20px 24px;color:#fff;">
-            <h4 style="margin:0 0 4px;font-weight:800;font-size:1.1rem;">&#x2705; تأكيد قبول الدفع</h4>
-            <p style="margin:0;opacity:.8;font-size:.88rem;" id="payModalDesc">—</p>
+<div class="ref-card">
+    <div class="ref-card-hdr clickable" onclick="toggleCollapse(\'refProcWd\',\'refProcCaret\')">
+        <h3>سجل الدفعات المعالجة <span class="hdr-badge">' . count($processed_withdrawals) . '</span></h3>
+        <span class="ref-caret" id="refProcCaret">&#x25BC;</span>
+    </div>
+    <div class="ref-collapse" id="refProcWd">';
+
+if (empty($processed_withdrawals)) {
+    echo '
+    <div class="ref-empty" style="padding:30px 20px;">
+        <div class="re-icon">&#x1F4C4;</div>
+        <p>لا توجد دفعات معالجة بعد.</p>
+    </div>';
+} else {
+    $ctx_wr = context_system::instance();
+    echo '
+    <div class="ref-tbl-scroll"><table class="ref-tbl"><thead><tr>
+        <th>المسوق</th>
+        <th>الكود</th>
+        <th>المبلغ</th>
+        <th>الحالة</th>
+        <th>التاريخ</th>
+        <th>الإيصال</th>
+        <th style="text-align:center;">حذف</th>
+    </tr></thead><tbody>';
+
+    foreach ($processed_withdrawals as $pw) {
+        $pwname = htmlspecialchars(
+            trim(($pw->firstname ?? '') . ' ' . ($pw->lastname ?? '')) ?: '(محذوف #' . $pw->marketerid . ')'
+        );
+        [$pwlbl, $pwcls] = $wd_status_labels[(int)$pw->status] ?? ['—', ''];
+
+        $receipt_cell = '<span style="color:var(--rm);font-size:.78rem;">—</span>';
+        if (!empty($pw->receipt_file)) {
+            $dl_url = moodle_url::make_pluginfile_url(
+                $ctx_wr->id, 'local_referral', 'withdrawal_receipts',
+                $pw->id, '/', $pw->receipt_file, true
+            );
+            $receipt_cell = '<a href="' . $dl_url->out(false) . '" target="_blank"
+                class="ref-btn btn-o" style="font-size:.72rem;">تحميل</a>';
+        }
+
+        $del_note = (int)$pw->status === 1
+            ? 'حذف هذه الدفعة وإعادة العمولات المرتبطة إلى حالة الانتظار؟'
+            : 'حذف سجل الرفض؟';
+        $del_url = (new moodle_url($base_url, [
+            'action' => 'deletewithdrawal', 'wid' => $pw->id, 'sesskey' => $sess,
+        ]))->out(false);
+
+        echo '
+        <tr>
+            <td style="font-weight:700;color:var(--rd);">' . $pwname . '</td>
+            <td><span class="rb rb-blue">' . htmlspecialchars($pw->code ?? '—') . '</span></td>
+            <td style="font-weight:800;color:var(--rg);">' . number_format((float)$pw->amount, 2) . '</td>
+            <td><span class="rb ' . $pwcls . '">' . $pwlbl . '</span></td>
+            <td style="color:var(--rm);font-size:.8rem;white-space:nowrap;">'
+                . userdate($pw->timecreated, '%d/%m/%Y %H:%M') . '</td>
+            <td>' . $receipt_cell . '</td>
+            <td style="text-align:center;">
+                <a href="' . $del_url . '" class="ref-btn btn-r" style="font-size:.72rem;"
+                   onclick="return confirm(\'' . addslashes($del_note) . '\')">حذف</a>
+            </td>
+        </tr>';
+    }
+
+    echo '</tbody></table></div>';
+}
+echo '</div></div>';
+
+/* ── Payment approval modal ── */
+echo '
+<div id="payWithdrawalModal" class="ref-modal-overlay">
+    <div class="ref-modal">
+        <div class="ref-modal-hdr">
+            <h4>تأكيد قبول الدفع</h4>
+            <p id="payModalDesc">—</p>
         </div>
-        <form method="post" action="' . $manage_url . '" enctype="multipart/form-data" onsubmit="return validatePayModal()">
+        <form method="post" action="' . $base_out . '" enctype="multipart/form-data" onsubmit="return validatePayModal()">
             <input type="hidden" name="action"  value="paywithdrawal">
-            <input type="hidden" name="sesskey" value="' . sesskey() . '">
+            <input type="hidden" name="sesskey" value="' . $sess . '">
             <input type="hidden" name="wid" id="payModalWid" value="0">
-            <div style="padding:24px;">
-                <div style="background:#d1fae5;border:1.5px solid #6ee7b7;border-radius:10px;padding:14px 18px;margin-bottom:20px;">
-                    <div style="font-size:.75rem;color:#065f46;font-weight:700;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;">المبلغ المطلوب</div>
-                    <div style="font-size:1.8rem;font-weight:800;color:#065f46;" id="payModalAmount">—</div>
+            <div class="ref-modal-body">
+                <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:12px 16px;margin-bottom:16px;">
+                    <div style="font-size:.68rem;font-weight:700;color:#166534;text-transform:uppercase;letter-spacing:.04em;margin-bottom:3px;">المبلغ</div>
+                    <div style="font-size:1.65rem;font-weight:800;color:#166534;" id="payModalAmount">—</div>
                 </div>
-                <div style="margin-bottom:16px;">
-                    <label style="display:block;font-size:.83rem;font-weight:700;color:#374151;margin-bottom:6px;">
-                        &#x1F4CE; إيصال الدفع <span style="font-weight:400;color:#94a3b8;">(اختياري — PDF/JPG/PNG — حد 5 MB)</span>
+                <div>
+                    <label style="display:block;font-size:.8rem;font-weight:700;color:#374151;margin-bottom:5px;">
+                        إيصال الدفع <span style="font-weight:400;color:var(--rm);">(اختياري — PDF/JPG/PNG — حد 5 MB)</span>
                     </label>
                     <input type="file" name="receipt_file" id="payModalReceipt" accept=".pdf,.jpg,.jpeg,.png"
-                           style="width:100%;padding:10px 14px;border:1.5px dashed #e2e8f0;border-radius:10px;box-sizing:border-box;background:#f8fafc;cursor:pointer;font-size:.88rem;">
+                           style="width:100%;padding:8px 12px;border:1.5px dashed var(--rb);border-radius:8px;
+                                  box-sizing:border-box;background:var(--rs);cursor:pointer;font-size:.86rem;">
                 </div>
-                <div style="display:flex;gap:10px;margin-top:4px;">
-                    <button type="submit" style="flex:1;background:linear-gradient(135deg,#059669,#047857);color:#fff;border:none;padding:13px;border-radius:10px;font-size:1rem;font-weight:800;cursor:pointer;">
-                        &#x2705; تأكيد الدفع
-                    </button>
-                    <button type="button" onclick="closePayModal()"
-                            style="padding:13px 22px;border-radius:10px;border:1.5px solid #e2e8f0;background:#f8fafc;color:#64748b;font-weight:700;cursor:pointer;">
-                        إلغاء
-                    </button>
-                </div>
+            </div>
+            <div class="ref-modal-footer">
+                <button type="button" onclick="closePayModal()" class="ref-btn btn-o">إلغاء</button>
+                <button type="submit" class="ref-btn btn-g" style="padding:7px 20px;">تأكيد الدفع</button>
             </div>
         </form>
     </div>
 </div>
 
 <script>
+function toggleCollapse(id, caretId) {
+    var el   = document.getElementById(id);
+    var open = el.classList.toggle("open");
+    var car  = document.getElementById(caretId);
+    if (car) car.classList.toggle("open", open);
+}
 function openPayModal(wid, name, amount) {
-    document.getElementById("payModalWid").value = wid;
+    document.getElementById("payModalWid").value       = wid;
     document.getElementById("payModalDesc").textContent = "الدفع لـ " + name;
     document.getElementById("payModalAmount").textContent = amount;
-    document.getElementById("payModalReceipt").value = "";
-    var modal = document.getElementById("payWithdrawalModal");
-    modal.style.display = "flex";
+    document.getElementById("payModalReceipt").value   = "";
+    document.getElementById("payWithdrawalModal").style.display = "flex";
 }
 function closePayModal() {
     document.getElementById("payWithdrawalModal").style.display = "none";
 }
 function validatePayModal() {
     var file = document.getElementById("payModalReceipt").files[0];
-    if (file && file.size > 5242880) {
-        alert("حجم الملف يتجاوز 5 MB. اختر ملفاً أصغر.");
-        return false;
-    }
+    if (file && file.size > 5242880) { alert("حجم الملف يتجاوز 5 MB."); return false; }
     return true;
 }
 document.getElementById("payWithdrawalModal").addEventListener("click", function(e) {
     if (e.target === this) closePayModal();
 });
-</script>
-';
+</script>';
 
+echo '</div>';
 echo $OUTPUT->footer();

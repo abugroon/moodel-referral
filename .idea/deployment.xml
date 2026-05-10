@@ -27,7 +27,7 @@
       <paths name="MoodelServer">
         <serverdata>
           <mappings>
-            <mapping deploy="/referral" local="$PROJECT_DIR$" web="/" />
+            <mapping deploy="/local/referral" local="$PROJECT_DIR$" web="/" />
           </mappings>
         </serverdata>
       </paths>
@@ -42,6 +42,13 @@
         <serverdata>
           <mappings>
             <mapping local="$PROJECT_DIR$" web="/" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="VPSSER">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/referral" local="$PROJECT_DIR$" web="/" />
           </mappings>
         </serverdata>
       </paths>

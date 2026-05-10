@@ -3,18 +3,15 @@
 // Payment Transactions Report — shows revenue, marketer commissions, teacher commissions.
 
 require_once(__DIR__ . '/../../../config.php');
+require_once($CFG->libdir . '/adminlib.php');
+require_once(__DIR__ . '/tabs.php');
 
 require_login();
 require_capability('moodle/site:config', context_system::instance());
 
-global $DB, $OUTPUT, $CFG;
+admin_externalpage_setup('local_referral_report');
 
-$context = context_system::instance();
-$PAGE->set_url(new moodle_url('/local/referral/admin/report.php'));
-$PAGE->set_context($context);
-$PAGE->set_pagelayout('admin');
-$PAGE->set_title('Payment Transactions Report');
-$PAGE->set_heading('Payment Transactions Report');
+global $DB, $OUTPUT;
 
 /* ================================================================
    Date filter — default = current month.
@@ -94,6 +91,7 @@ $net_revenue = $total_revenue - $total_marketer - $total_teacher;
    Render.
 ================================================================ */
 echo $OUTPUT->header();
+echo local_referral_admin_tabs('report');
 
 ?>
     <div class="container-fluid mt-4" style="max-width:1600px;">

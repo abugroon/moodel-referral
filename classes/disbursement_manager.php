@@ -70,14 +70,11 @@ class disbursement_manager
     public static function get_disbursed_total(string $category, int $start, int $end): float
     {
         global $DB;
-        if (!$DB->get_manager()->table_exists('local_ref_disbursements')) {
-            return 0.0;
-        }
         $sql = "SELECT COALESCE(SUM(amount), 0)
                   FROM {local_ref_disbursements}
-                 WHERE category    = :category
+                 WHERE category     = :category
                    AND period_start >= :start
-                   AND period_end   <= :end";
+                   AND period_start <= :end";
         return (float)$DB->get_field_sql($sql, [
             'category' => $category,
             'start'    => $start,
@@ -92,12 +89,14 @@ class disbursement_manager
     public static function save(array $data): int
     {
         global $DB, $USER;
+        debugging('Disbursement save attempt: ' . json_encode($data), DEBUG_DEVELOPER);
+        $date = (int)$data['disbursement_date'];
         return (int)$DB->insert_record('local_ref_disbursements', (object)[
             'category'       => $data['category'],
             'recipient_name' => $data['recipient_name'],
             'amount'         => $data['amount'],
-            'period_start'   => $data['period_start'],
-            'period_end'     => $data['period_end'],
+            'period_start'   => $date,
+            'period_end'     => $date,
             'receipt_file'   => '',
             'notes'          => $data['notes'],
             'created_by'     => $USER->id,
@@ -118,21 +117,16 @@ class disbursement_manager
      * Disbursement history rows recorded during [start, end], ordered by
      * category then date descending.
      */
-    public static function get_history(int $start, int $end): array
+    public static function get_history(): array
     {
         global $DB;
-        if (!$DB->get_manager()->table_exists('local_ref_disbursements')) {
-            return [];
-        }
         $sql = "SELECT d.id, d.category, d.recipient_name, d.amount,
-                       d.period_start, d.period_end, d.receipt_file,
+                       d.period_start, d.receipt_file,
                        d.notes, d.timecreated,
                        u.firstname, u.lastname
                   FROM {local_ref_disbursements} d
                   JOIN {user} u ON u.id = d.created_by
-                 WHERE d.timecreated >= :start
-                   AND d.timecreated <= :end
-                 ORDER BY d.category ASC, d.timecreated DESC";
-        return $DB->get_records_sql($sql, ['start' => $start, 'end' => $end]);
+                 ORDER BY d.timecreated DESC";
+        return $DB->get_records_sql($sql);
     }
 }

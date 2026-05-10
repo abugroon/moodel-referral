@@ -91,11 +91,13 @@ function xmldb_local_referral_upgrade($oldversion)
 
     if ($oldversion < 2026050801) {
 
-        // Add parent_id to local_ref_marketers.
+        // Add parent_id to local_ref_marketers only if it still exists (not yet migrated away).
         $marketerstable = new xmldb_table('local_ref_marketers');
-        $parentfield = new xmldb_field('parent_id', XMLDB_TYPE_INTEGER, '10', null, null, null, null, 'userid');
-        if (!$dbman->field_exists($marketerstable, $parentfield)) {
-            $dbman->add_field($marketerstable, $parentfield);
+        if ($dbman->table_exists($marketerstable)) {
+            $parentfield = new xmldb_field('parent_id', XMLDB_TYPE_INTEGER, '10', null, null, null, null, 'userid');
+            if (!$dbman->field_exists($marketerstable, $parentfield)) {
+                $dbman->add_field($marketerstable, $parentfield);
+            }
         }
 
         // Create local_ref_disbursements table.
@@ -128,9 +130,11 @@ function xmldb_local_referral_upgrade($oldversion)
     // =============================================
     if ($oldversion < 2026040200) {
         $table = new xmldb_table('local_ref_marketers');
-        $field = new xmldb_field('parent_id', XMLDB_TYPE_INTEGER, '10', null, null, null, null, 'userid');
-        if (!$dbman->field_exists($table, $field)) {
-            $dbman->add_field($table, $field);
+        if ($dbman->table_exists($table)) {
+            $field = new xmldb_field('parent_id', XMLDB_TYPE_INTEGER, '10', null, null, null, null, 'userid');
+            if (!$dbman->field_exists($table, $field)) {
+                $dbman->add_field($table, $field);
+            }
         }
         upgrade_plugin_savepoint(true, 2026040200, 'local', 'referral');
     }
@@ -223,7 +227,7 @@ function xmldb_local_referral_upgrade($oldversion)
 
     // Safety step: ensure local_ref_marketer_profile exists for sites that were
     // freshly installed without it (install.xml previously had the old schema).
-    if ($oldversion < 2026050902) {
+    if ($oldversion < 2026051001) {
         $profile_table = new xmldb_table('local_ref_marketer_profile');
         if (!$dbman->table_exists($profile_table)) {
             $profile_table->add_field('id',                    XMLDB_TYPE_INTEGER, '10',  null, XMLDB_NOTNULL, XMLDB_SEQUENCE, null);
@@ -251,7 +255,51 @@ function xmldb_local_referral_upgrade($oldversion)
             }
         }
 
-        upgrade_plugin_savepoint(true, 2026050902, 'local', 'referral');
+        // Re-run data migration from old table in case 2026040300 was skipped due to the
+        // version-ordering bug (2026050801 crashed before 2026040300 could run).
+        $old_table = new xmldb_table('local_ref_marketers');
+        if ($dbman->table_exists($old_table)) {
+            $old_rows = $DB->get_records_select(
+                'local_ref_marketers',
+                'userid IS NOT NULL',
+                [],
+                '',
+                'id, userid, code, commission_percentage, parent_id, timecreated, timemodified'
+            );
+            $id_to_userid = [];
+            foreach ($old_rows as $r) {
+                $id_to_userid[$r->id] = (int)$r->userid;
+            }
+            foreach ($old_rows as $r) {
+                if ($DB->record_exists('local_ref_marketer_profile', ['userid' => $r->userid])) {
+                    continue;
+                }
+                $parent_userid = (!empty($r->parent_id) && isset($id_to_userid[$r->parent_id]))
+                    ? $id_to_userid[$r->parent_id] : null;
+                $now = time();
+                $DB->insert_record('local_ref_marketer_profile', (object)[
+                    'userid'                => (int)$r->userid,
+                    'code'                  => $r->code,
+                    'commission_percentage' => (int)$r->commission_percentage,
+                    'parent_userid'         => $parent_userid,
+                    'timecreated'           => !empty($r->timecreated)  ? (int)$r->timecreated  : $now,
+                    'timemodified'          => !empty($r->timemodified) ? (int)$r->timemodified : $now,
+                ]);
+            }
+            foreach ($id_to_userid as $old_id => $uid) {
+                foreach (['local_ref_users', 'local_ref_commissions', 'local_ref_withdrawals'] as $tbl) {
+                    if ($dbman->table_exists(new xmldb_table($tbl))) {
+                        $DB->execute(
+                            "UPDATE {{$tbl}} SET marketerid = :uid WHERE marketerid = :old_id",
+                            ['uid' => $uid, 'old_id' => $old_id]
+                        );
+                    }
+                }
+            }
+            $dbman->drop_table($old_table);
+        }
+
+        upgrade_plugin_savepoint(true, 2026051001, 'local', 'referral');
     }
 
     return true;
