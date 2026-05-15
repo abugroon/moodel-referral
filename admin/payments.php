@@ -88,9 +88,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && optional_param('action', '', PARAM_
 ================================================================ */
 $params = ['start' => $start_ts, 'end' => $end_of_day];
 
-$sql_rev = "SELECT COALESCE(SUM(amount), 0) AS total
-              FROM {payments}
-             WHERE timecreated >= :start AND timecreated <= :end";
+$sql_rev = "SELECT COALESCE(SUM(totalamount), 0) AS total
+              FROM {paygw_bank}
+             WHERE status = 'A'
+               AND timechecked >= :start AND timechecked <= :end";
 $rev_record  = $DB->get_record_sql($sql_rev, $params);
 $grand_total = (float)($rev_record->total ?? 0);
 

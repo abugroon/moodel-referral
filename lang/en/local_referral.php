@@ -69,3 +69,33 @@ $string['totaldisbursed']  = 'Total Paid';
 $string['totalremaining']  = 'Total Remaining';
 $string['nodisbursements'] = 'No disbursements recorded for this period.';
 $string['receipt_download'] = 'Download';
+
+// Marketer type system.
+$string['type_main']              = 'Main marketer';
+$string['type_sub']               = 'Sub marketer';
+$string['type_main_badge']        = 'Main';
+$string['type_sub_badge']         = 'Sub';
+$string['convert_to_main']        = 'Promote to Main';
+$string['convert_to_sub']         = 'Set as Sub';
+$string['assign_parent_marketer'] = 'Assign parent marketer';
+$string['has_sub_marketers']      = 'Has sub-marketers';
+$string['no_parent_selected']     = 'Please select a parent marketer.';
+$string['error_self_parent']      = 'A marketer cannot be its own parent.';
+$string['error_parent_not_main']  = 'The selected parent must be a main marketer.';
+$string['error_has_subs']         = 'Cannot convert to sub: this marketer already has sub-marketers.';
+$string['promoted_to_main']       = 'Marketer promoted to main successfully.';
+$string['set_as_sub']             = 'Marketer set as sub-marketer successfully.';
+
+// Withdrawal routing.
+$string['pending_sub_withdrawals']     = 'Pending sub-marketer withdrawal requests';
+$string['pending_teacher_withdrawals'] = 'Pending teacher withdrawal requests';
+$string['approve_withdrawal']          = 'Approve';
+$string['reject_withdrawal']           = 'Reject';
+$string['main_marketer_label']         = 'Main marketer';
+$string['sub_marketer_label']          = 'Sub marketer';
+
+// Capabilities.
+$string['local/referral:manage']             = 'Manage referral marketers (admin)';
+$string['local/referral:approvewithdrawals'] = 'Approve marketer and teacher withdrawal requests';
+$string['local/referral:viewhierarchy']      = 'View full marketer hierarchy';
+$string['local/referral:viewownaccount']     = 'View own marketer account page';

@@ -1,11 +1,12 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <!-- /local/referral/db/install.xml -->
-<XMLDB PATH="local/referral/db" VERSION="2026050902" COMMENT="Referral plugin tables — current schema">
+<XMLDB PATH="local/referral/db" VERSION="2026051101" COMMENT="Referral plugin tables — current schema">
     <TABLES>
 
         <!--
           local_ref_marketer_profile
           One row per active marketer (linked to a Moodle user account).
+          type: 'main' = top-level marketer, 'sub' = belongs to a main marketer.
         -->
         <TABLE NAME="local_ref_marketer_profile" COMMENT="Active marketer profiles (one per user)">
             <FIELDS>
@@ -13,7 +14,8 @@
                 <FIELD NAME="userid"                TYPE="int"  LENGTH="10" NOTNULL="true"  COMMENT="Moodle user ID"/>
                 <FIELD NAME="code"                  TYPE="char" LENGTH="64" NOTNULL="true"  COMMENT="Unique referral code"/>
                 <FIELD NAME="commission_percentage" TYPE="int"  LENGTH="10" NOTNULL="true"  DEFAULT="10"/>
-                <FIELD NAME="parent_userid"         TYPE="int"  LENGTH="10" NOTNULL="false" COMMENT="Parent marketer user ID"/>
+                <FIELD NAME="parent_userid"         TYPE="int"  LENGTH="10" NOTNULL="false" COMMENT="Parent marketer user ID (legacy FK to mdl_user.id)"/>
+                <FIELD NAME="type"                  TYPE="char" LENGTH="10" NOTNULL="true"  DEFAULT="main" COMMENT="main or sub"/>
                 <FIELD NAME="timecreated"           TYPE="int"  LENGTH="10" NOTNULL="true"/>
                 <FIELD NAME="timemodified"          TYPE="int"  LENGTH="10" NOTNULL="true"/>
             </FIELDS>
@@ -21,8 +23,10 @@
                 <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
             </KEYS>
             <INDEXES>
-                <INDEX NAME="userid_uix" UNIQUE="true"  FIELDS="userid"/>
-                <INDEX NAME="code_uix"   UNIQUE="true"  FIELDS="code"/>
+                <INDEX NAME="userid_uix"  UNIQUE="true"  FIELDS="userid"/>
+                <INDEX NAME="code_uix"    UNIQUE="true"  FIELDS="code"/>
+                <INDEX NAME="type_idx"    UNIQUE="false" FIELDS="type"/>
+                <INDEX NAME="parent_idx"  UNIQUE="false" FIELDS="parent_userid"/>
             </INDEXES>
         </TABLE>
 
@@ -76,25 +80,34 @@
         <!--
           local_ref_withdrawals
           Withdrawal requests submitted by marketers.
-          status: 0=pending, 1=done, 2=rejected
+          status: 0=pending, 1=done/approved, 2=rejected
+          mainmarketerid: the main marketer userid this request is routed to.
+            - For sub-marketer requests: parent marketer userid.
+            - For main-marketer requests: 0 (approved by site admin only).
+          createdby: userid of who submitted the request.
+          approvedby: userid of who approved/rejected it.
         -->
         <TABLE NAME="local_ref_withdrawals" COMMENT="Marketer withdrawal requests">
             <FIELDS>
-                <FIELD NAME="id"           TYPE="int"    LENGTH="10"          NOTNULL="true"  SEQUENCE="true"/>
-                <FIELD NAME="marketerid"   TYPE="int"    LENGTH="10"          NOTNULL="true"/>
-                <FIELD NAME="amount"       TYPE="number" LENGTH="10" DECIMALS="2" NOTNULL="true" DEFAULT="0"/>
-                <FIELD NAME="status"       TYPE="int"    LENGTH="10"          NOTNULL="true"  DEFAULT="0"/>
-                <FIELD NAME="notes"        TYPE="text"                        NOTNULL="false"/>
-                <FIELD NAME="receipt_file" TYPE="char"   LENGTH="255"         NOTNULL="false" COMMENT="Stored receipt filename"/>
-                <FIELD NAME="timecreated"  TYPE="int"    LENGTH="10"          NOTNULL="true"/>
-                <FIELD NAME="timemodified" TYPE="int"    LENGTH="10"          NOTNULL="true"/>
+                <FIELD NAME="id"             TYPE="int"    LENGTH="10"          NOTNULL="true"  SEQUENCE="true"/>
+                <FIELD NAME="marketerid"     TYPE="int"    LENGTH="10"          NOTNULL="true"  COMMENT="Requesting marketer userid"/>
+                <FIELD NAME="mainmarketerid" TYPE="int"    LENGTH="10"          NOTNULL="false" COMMENT="Main marketer userid this is routed to (0 = admin-only)"/>
+                <FIELD NAME="amount"         TYPE="number" LENGTH="10" DECIMALS="2" NOTNULL="true" DEFAULT="0"/>
+                <FIELD NAME="status"         TYPE="int"    LENGTH="10"          NOTNULL="true"  DEFAULT="0"/>
+                <FIELD NAME="notes"          TYPE="text"                        NOTNULL="false"/>
+                <FIELD NAME="receipt_file"   TYPE="char"   LENGTH="255"         NOTNULL="false" COMMENT="Stored receipt filename"/>
+                <FIELD NAME="createdby"      TYPE="int"    LENGTH="10"          NOTNULL="true"  DEFAULT="0"/>
+                <FIELD NAME="approvedby"     TYPE="int"    LENGTH="10"          NOTNULL="false"/>
+                <FIELD NAME="timecreated"    TYPE="int"    LENGTH="10"          NOTNULL="true"/>
+                <FIELD NAME="timemodified"   TYPE="int"    LENGTH="10"          NOTNULL="true"/>
             </FIELDS>
             <KEYS>
                 <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
             </KEYS>
             <INDEXES>
-                <INDEX NAME="marketer_idx" UNIQUE="false" FIELDS="marketerid"/>
-                <INDEX NAME="status_idx"   UNIQUE="false" FIELDS="status"/>
+                <INDEX NAME="marketer_idx"      UNIQUE="false" FIELDS="marketerid"/>
+                <INDEX NAME="mainmarketer_idx"  UNIQUE="false" FIELDS="mainmarketerid"/>
+                <INDEX NAME="status_idx"        UNIQUE="false" FIELDS="status"/>
             </INDEXES>
         </TABLE>
 

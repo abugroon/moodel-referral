@@ -64,9 +64,6 @@ function xmldb_local_referral_upgrade($oldversion)
         upgrade_plugin_savepoint(true, 2026020400, 'local', 'referral');
     }
 
-    // =============================================
-    // الإصدار الجديد: إضافة جدول طلبات السحب
-    // =============================================
     if ($oldversion < 2026040100) {
 
         $withdrawalstable = new xmldb_table('local_ref_withdrawals');
@@ -91,7 +88,6 @@ function xmldb_local_referral_upgrade($oldversion)
 
     if ($oldversion < 2026050801) {
 
-        // Add parent_id to local_ref_marketers only if it still exists (not yet migrated away).
         $marketerstable = new xmldb_table('local_ref_marketers');
         if ($dbman->table_exists($marketerstable)) {
             $parentfield = new xmldb_field('parent_id', XMLDB_TYPE_INTEGER, '10', null, null, null, null, 'userid');
@@ -100,7 +96,6 @@ function xmldb_local_referral_upgrade($oldversion)
             }
         }
 
-        // Create local_ref_disbursements table.
         $disbtable = new xmldb_table('local_ref_disbursements');
         if (!$dbman->table_exists($disbtable)) {
             $disbtable->add_field('id',             XMLDB_TYPE_INTEGER, '10',   null, XMLDB_NOTNULL, XMLDB_SEQUENCE, null);
@@ -125,9 +120,6 @@ function xmldb_local_referral_upgrade($oldversion)
         upgrade_plugin_savepoint(true, 2026050801, 'local', 'referral');
     }
 
-    // =============================================
-    // Version: add parent_id to old marketers table
-    // =============================================
     if ($oldversion < 2026040200) {
         $table = new xmldb_table('local_ref_marketers');
         if ($dbman->table_exists($table)) {
@@ -139,14 +131,8 @@ function xmldb_local_referral_upgrade($oldversion)
         upgrade_plugin_savepoint(true, 2026040200, 'local', 'referral');
     }
 
-    // =============================================
-    // Version: replace local_ref_marketers with
-    //          local_ref_marketer_profile
-    //          marketerid in child tables now = userid
-    // =============================================
     if ($oldversion < 2026040300) {
 
-        // 1. Create the new profile table if it does not exist
         $new_table = new xmldb_table('local_ref_marketer_profile');
         if (!$dbman->table_exists($new_table)) {
             $new_table->add_field('id',                   XMLDB_TYPE_INTEGER, '10',   null, XMLDB_NOTNULL, XMLDB_SEQUENCE, null);
@@ -164,7 +150,6 @@ function xmldb_local_referral_upgrade($oldversion)
             $dbman->create_table($new_table);
         }
 
-        // 2. Migrate rows from old table — only rows that have a real userid
         $old_table = new xmldb_table('local_ref_marketers');
         if ($dbman->table_exists($old_table)) {
             $old_rows = $DB->get_records_select(
@@ -175,7 +160,6 @@ function xmldb_local_referral_upgrade($oldversion)
                 'id, userid, code, commission_percentage, parent_id, timecreated, timemodified'
             );
 
-            // Build a map: old marketer id -> user id (for parent lookup)
             $id_to_userid = [];
             foreach ($old_rows as $r) {
                 $id_to_userid[$r->id] = (int)$r->userid;
@@ -183,7 +167,7 @@ function xmldb_local_referral_upgrade($oldversion)
 
             foreach ($old_rows as $r) {
                 if ($DB->record_exists('local_ref_marketer_profile', ['userid' => $r->userid])) {
-                    continue; // already migrated
+                    continue;
                 }
                 $parent_userid = (!empty($r->parent_id) && isset($id_to_userid[$r->parent_id]))
                     ? $id_to_userid[$r->parent_id]
@@ -199,7 +183,6 @@ function xmldb_local_referral_upgrade($oldversion)
                 ]);
             }
 
-            // 3. Update marketerid in child tables: old marketer id -> user id
             foreach ($id_to_userid as $old_id => $uid) {
                 foreach (['local_ref_users', 'local_ref_commissions', 'local_ref_withdrawals'] as $tbl) {
                     $DB->execute(
@@ -209,7 +192,6 @@ function xmldb_local_referral_upgrade($oldversion)
                 }
             }
 
-            // 4. Drop the old table
             $dbman->drop_table($old_table);
         }
 
@@ -225,8 +207,6 @@ function xmldb_local_referral_upgrade($oldversion)
         upgrade_plugin_savepoint(true, 2026050901, 'local', 'referral');
     }
 
-    // Safety step: ensure local_ref_marketer_profile exists for sites that were
-    // freshly installed without it (install.xml previously had the old schema).
     if ($oldversion < 2026051001) {
         $profile_table = new xmldb_table('local_ref_marketer_profile');
         if (!$dbman->table_exists($profile_table)) {
@@ -245,8 +225,6 @@ function xmldb_local_referral_upgrade($oldversion)
             $dbman->create_table($profile_table);
         }
 
-        // Also ensure local_ref_withdrawals.receipt_file exists
-        // (may have been skipped if site was at 2026050901 already but table was missing).
         $wr_table = new xmldb_table('local_ref_withdrawals');
         if ($dbman->table_exists($wr_table)) {
             $rf_field = new xmldb_field('receipt_file', XMLDB_TYPE_CHAR, '255', null, null, null, null, 'notes');
@@ -255,8 +233,6 @@ function xmldb_local_referral_upgrade($oldversion)
             }
         }
 
-        // Re-run data migration from old table in case 2026040300 was skipped due to the
-        // version-ordering bug (2026050801 crashed before 2026040300 could run).
         $old_table = new xmldb_table('local_ref_marketers');
         if ($dbman->table_exists($old_table)) {
             $old_rows = $DB->get_records_select(
@@ -300,6 +276,85 @@ function xmldb_local_referral_upgrade($oldversion)
         }
 
         upgrade_plugin_savepoint(true, 2026051001, 'local', 'referral');
+    }
+
+    // =========================================================================
+    // 2026051100 — Add marketer type system and withdrawal routing fields.
+    // =========================================================================
+    if ($oldversion < 2026051100) {
+
+        // --- local_ref_marketer_profile: add 'type' field ---
+        $profile_tbl = new xmldb_table('local_ref_marketer_profile');
+
+        if (!$dbman->field_exists($profile_tbl, new xmldb_field('type'))) {
+            $type_field = new xmldb_field('type', XMLDB_TYPE_CHAR, '10', null, XMLDB_NOTNULL, null, 'main', 'parent_userid');
+            $dbman->add_field($profile_tbl, $type_field);
+        }
+
+        // Backfill type from existing parent_userid data (idempotent).
+        // Sub-marketer = has a parent_userid set; main = no parent_userid.
+        $DB->execute(
+            "UPDATE {local_ref_marketer_profile}
+                SET type = 'sub'
+              WHERE parent_userid IS NOT NULL AND parent_userid > 0"
+        );
+        $DB->execute(
+            "UPDATE {local_ref_marketer_profile}
+                SET type = 'main'
+              WHERE (parent_userid IS NULL OR parent_userid = 0)"
+        );
+
+        // Add type index if missing.
+        $type_index = new xmldb_index('type_idx', XMLDB_INDEX_NOTUNIQUE, ['type']);
+        if (!$dbman->index_exists($profile_tbl, $type_index)) {
+            $dbman->add_index($profile_tbl, $type_index);
+        }
+
+        // Add parent_userid index if missing.
+        $parent_index = new xmldb_index('parent_idx', XMLDB_INDEX_NOTUNIQUE, ['parent_userid']);
+        if (!$dbman->index_exists($profile_tbl, $parent_index)) {
+            $dbman->add_index($profile_tbl, $parent_index);
+        }
+
+        // --- local_ref_withdrawals: add routing + audit fields ---
+        $wr_tbl = new xmldb_table('local_ref_withdrawals');
+
+        if (!$dbman->field_exists($wr_tbl, new xmldb_field('mainmarketerid'))) {
+            $f = new xmldb_field('mainmarketerid', XMLDB_TYPE_INTEGER, '10', null, null, null, null, 'marketerid');
+            $dbman->add_field($wr_tbl, $f);
+        }
+
+        if (!$dbman->field_exists($wr_tbl, new xmldb_field('createdby'))) {
+            $f = new xmldb_field('createdby', XMLDB_TYPE_INTEGER, '10', null, XMLDB_NOTNULL, null, '0', 'receipt_file');
+            $dbman->add_field($wr_tbl, $f);
+        }
+
+        if (!$dbman->field_exists($wr_tbl, new xmldb_field('approvedby'))) {
+            $f = new xmldb_field('approvedby', XMLDB_TYPE_INTEGER, '10', null, null, null, null, 'createdby');
+            $dbman->add_field($wr_tbl, $f);
+        }
+
+        // Backfill createdby = marketerid for existing rows.
+        $DB->execute(
+            "UPDATE {local_ref_withdrawals} SET createdby = marketerid WHERE createdby = 0 OR createdby IS NULL"
+        );
+
+        // Backfill mainmarketerid: for sub-marketers set their parent; for mains set 0.
+        // Use a PHP loop instead of JOIN-UPDATE for cross-DB compatibility.
+        $wr_rows = $DB->get_records_select('local_ref_withdrawals', 'mainmarketerid IS NULL', [], '', 'id, marketerid');
+        foreach ($wr_rows as $wr) {
+            $mp = $DB->get_record('local_ref_marketer_profile', ['userid' => $wr->marketerid], 'parent_userid', IGNORE_MISSING);
+            $main = ($mp && !empty($mp->parent_userid)) ? (int)$mp->parent_userid : 0;
+            $DB->set_field('local_ref_withdrawals', 'mainmarketerid', $main, ['id' => $wr->id]);
+        }
+
+        // Add mainmarketerid index if missing.
+        $mm_index = new xmldb_index('mainmarketer_idx', XMLDB_INDEX_NOTUNIQUE, ['mainmarketerid']);
+        if (!$dbman->index_exists($wr_tbl, $mm_index)) {
+            $dbman->add_index($wr_tbl, $mm_index);
+        }
+
+        upgrade_plugin_savepoint(true, 2026051100, 'local', 'referral');
     }
 
     return true;

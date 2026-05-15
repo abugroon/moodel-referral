@@ -36,7 +36,57 @@ if (!$marketer) {
 }
 
 /* ============================================================
-   WITHDRAWAL REQUEST
+   MARKETER TYPE — resolve before any logic
+============================================================ */
+// Derive type from DB field; fall back from parent_userid for older installs.
+$marketer_type = 'main';
+if (isset($marketer->type) && $marketer->type !== '') {
+    $marketer_type = $marketer->type;
+} elseif (!empty($marketer->parent_userid)) {
+    $marketer_type = 'sub';
+}
+
+/* ============================================================
+   WITHDRAWAL REQUEST APPROVAL (for main marketers only)
+============================================================ */
+$approveaction = optional_param('approveaction', '', PARAM_ALPHANUMEXT);
+$approvewid    = optional_param('approvewid', 0, PARAM_INT);
+$approvetype   = optional_param('approvetype', 'marketer', PARAM_ALPHA); // marketer | teacher
+
+if ($marketer_type === 'main' && $approveaction && $approvewid && confirm_sesskey()) {
+    if ($approvetype === 'marketer') {
+        // Approve/reject sub-marketer withdrawal request.
+        $wr = $DB->get_record('local_ref_withdrawals', ['id' => $approvewid], '*', IGNORE_MISSING);
+        if ($wr && (int)$wr->mainmarketerid === (int)$USER->id) {
+            $newstatus = ($approveaction === 'approve') ? 1 : 2;
+            $DB->update_record('local_ref_withdrawals', (object)[
+                'id'           => $approvewid,
+                'status'       => $newstatus,
+                'approvedby'   => $USER->id,
+                'timemodified' => time(),
+            ]);
+        }
+        redirect(new moodle_url('/local/referral/myaccount.php'),
+            ($approveaction === 'approve') ? 'تمت الموافقة على طلب السحب.' : 'تم رفض طلب السحب.', 2);
+
+    } elseif ($approvetype === 'teacher'
+            && class_exists('\local_teacher_commissions\withdrawal_manager')) {
+        // Approve/reject teacher withdrawal request routed to this main marketer.
+        try {
+            $newstatus = ($approveaction === 'approve')
+                ? \local_teacher_commissions\withdrawal_manager::STATUS_APPROVED
+                : \local_teacher_commissions\withdrawal_manager::STATUS_REJECTED;
+            \local_teacher_commissions\withdrawal_manager::update_status($approvewid, $newstatus);
+        } catch (\Throwable $e) {
+            \core\notification::error($e->getMessage());
+        }
+        redirect(new moodle_url('/local/referral/myaccount.php'),
+            ($approveaction === 'approve') ? 'تمت الموافقة على طلب سحب المعلم.' : 'تم رفض طلب سحب المعلم.', 2);
+    }
+}
+
+/* ============================================================
+   WITHDRAWAL REQUEST (sub marketers or main marketers)
 ============================================================ */
 $requestwithdraw = optional_param('requestwithdraw', 0, PARAM_BOOL);
 $withdrawamount  = (float)optional_param('withdrawamount', 0, PARAM_FLOAT);
@@ -71,12 +121,19 @@ if ($requestwithdraw && confirm_sesskey()) {
     } elseif ($withdrawamount > $net_avail) {
         $withdrawmsg = 'error:المبلغ المطلوب أكبر من رصيدك المتاح (' . number_format($net_avail, 2) . ').';
     } else {
+        // Route to main marketer if sub, otherwise 0 (admin handles main marketer requests).
+        $main_for_wd = ($marketer_type === 'sub' && !empty($marketer->parent_userid))
+            ? (int)$marketer->parent_userid
+            : 0;
+
         $DB->insert_record('local_ref_withdrawals', (object)[
-            'marketerid'   => $marketer->userid,
-            'amount'       => $withdrawamount,
-            'status'       => 0,
-            'timecreated'  => time(),
-            'timemodified' => time(),
+            'marketerid'     => $marketer->userid,
+            'mainmarketerid' => $main_for_wd,
+            'amount'         => $withdrawamount,
+            'status'         => 0,
+            'createdby'      => $USER->id,
+            'timecreated'    => time(),
+            'timemodified'   => time(),
         ]);
         $withdrawmsg = 'success:تم إرسال طلب السحب بنجاح! سيتم مراجعته من قِبَل الإدارة.';
 
@@ -545,6 +602,174 @@ foreach ([
     </div>
     <?php endif; ?>
 </div>
+
+<!-- ── Main marketer: type indicator ── -->
+<?php if ($marketer_type === 'main'): ?>
+<div class="mk-card" style="border-right:4px solid #059669;">
+    <div class="mk-card-hdr">
+        <h3 style="color:#065f46;">&#x2B50; مسوق رئيسي</h3>
+    </div>
+    <div class="mk-card-body" style="padding:12px 18px;font-size:.86rem;color:#374151;">
+        أنت مسوق رئيسي. يمكنك إدارة مسوقيك الفرعيين ومراجعة طلبات السحب الواردة إليك.
+    </div>
+</div>
+<?php elseif ($marketer_type === 'sub' && $parent_marketer): ?>
+<div class="mk-card" style="border-right:4px solid #94a3b8;">
+    <div class="mk-card-hdr">
+        <h3 style="color:#475569;">&#x1F4CE; مسوق فرعي</h3>
+    </div>
+    <div class="mk-card-body" style="padding:12px 18px;font-size:.86rem;color:#374151;">
+        أنت مسوق فرعي تحت إشراف
+        <strong><?php echo s(trim(($parent_marketer->firstname ?? '') . ' ' . ($parent_marketer->lastname ?? ''))); ?></strong>.
+        سيتم توجيه طلبات سحبك إليه للمراجعة.
+    </div>
+</div>
+<?php endif; ?>
+
+<?php
+/* ── MAIN MARKETER: Pending sub-marketer withdrawal requests ── */
+$sub_pending_wds = [];
+$tc_pending_wds  = [];
+if ($marketer_type === 'main') {
+    $sub_pending_wds = $DB->get_records_sql(
+        "SELECT w.*, u.firstname, u.lastname, mp.code
+           FROM {local_ref_withdrawals} w
+      LEFT JOIN {user}                       u  ON u.id  = w.marketerid
+      LEFT JOIN {local_ref_marketer_profile} mp ON mp.userid = w.marketerid
+          WHERE w.mainmarketerid = :mid AND w.status = 0
+       ORDER BY w.timecreated ASC",
+        ['mid' => $USER->id]
+    );
+
+    // Teacher withdrawal requests routed to this main marketer.
+    if (class_exists('\local_teacher_commissions\withdrawal_manager')) {
+        $tc_pending_wds = \local_teacher_commissions\withdrawal_manager::get_requests_for_main(
+            (int)$USER->id,
+            \local_teacher_commissions\withdrawal_manager::STATUS_PENDING
+        );
+    }
+}
+
+if ($marketer_type === 'main' && (!empty($sub_pending_wds) || !empty($tc_pending_wds))):
+?>
+<!-- ── Pending withdrawal requests section ── -->
+<div class="mk-card">
+    <div class="mk-card-hdr">
+        <h3>طلبات السحب المعلقة الواردة إليك</h3>
+        <span class="badge"><?php echo count($sub_pending_wds) + count($tc_pending_wds); ?></span>
+    </div>
+    <div class="mk-card-body" style="padding:0;">
+
+    <?php if (!empty($sub_pending_wds)): ?>
+        <div style="padding:10px 18px 5px;font-size:.75rem;font-weight:700;color:var(--m);
+                    text-transform:uppercase;letter-spacing:.04em;">طلبات المسوقين الفرعيين</div>
+        <div style="overflow-x:auto;">
+        <table class="mk-tbl">
+            <thead>
+                <tr>
+                    <th>المسوق</th>
+                    <th style="text-align:left;">المبلغ</th>
+                    <th>التاريخ</th>
+                    <th style="text-align:center;">الإجراء</th>
+                </tr>
+            </thead>
+            <tbody>
+            <?php foreach ($sub_pending_wds as $swd):
+                $swname = trim(($swd->firstname ?? '') . ' ' . ($swd->lastname ?? '')) ?: '—';
+                $approve_url = new moodle_url('/local/referral/myaccount.php', [
+                    'approveaction' => 'approve', 'approvewid' => $swd->id,
+                    'approvetype'   => 'marketer', 'sesskey' => sesskey(),
+                ]);
+                $reject_url = new moodle_url('/local/referral/myaccount.php', [
+                    'approveaction' => 'reject',  'approvewid' => $swd->id,
+                    'approvetype'   => 'marketer', 'sesskey' => sesskey(),
+                ]);
+            ?>
+                <tr>
+                    <td style="font-weight:700;"><?php echo s($swname); ?>
+                        <?php if (!empty($swd->code)): ?>
+                        <span style="background:#dbeafe;color:#1d4ed8;font-size:.68rem;font-weight:700;
+                                     padding:1px 7px;border-radius:20px;"><?php echo s($swd->code); ?></span>
+                        <?php endif; ?>
+                    </td>
+                    <td style="text-align:left;font-weight:800;color:#059669;"><?php echo number_format($swd->amount, 2); ?></td>
+                    <td style="color:var(--m);font-size:.78rem;"><?php echo userdate($swd->timecreated, '%d/%m/%Y'); ?></td>
+                    <td style="text-align:center;">
+                        <div style="display:flex;gap:5px;justify-content:center;">
+                            <a href="<?php echo $approve_url->out(false); ?>" class="btn-wd"
+                               style="font-size:.75rem;padding:5px 12px;background:#059669;"
+                               onclick="return confirm('الموافقة على سحب <?php echo number_format($swd->amount, 2); ?>؟')">
+                                موافقة
+                            </a>
+                            <a href="<?php echo $reject_url->out(false); ?>" class="btn-wd"
+                               style="font-size:.75rem;padding:5px 12px;background:#dc2626;"
+                               onclick="return confirm('رفض طلب السحب؟')">
+                                رفض
+                            </a>
+                        </div>
+                    </td>
+                </tr>
+            <?php endforeach; ?>
+            </tbody>
+        </table>
+        </div>
+    <?php endif; ?>
+
+    <?php if (!empty($tc_pending_wds)): ?>
+        <div style="padding:10px 18px 5px;font-size:.75rem;font-weight:700;color:var(--m);
+                    text-transform:uppercase;letter-spacing:.04em;border-top:1px solid var(--b);">طلبات سحب المعلمين</div>
+        <div style="overflow-x:auto;">
+        <table class="mk-tbl">
+            <thead>
+                <tr>
+                    <th>المعلم</th>
+                    <th style="text-align:left;">المبلغ</th>
+                    <th>العملة</th>
+                    <th>التاريخ</th>
+                    <th style="text-align:center;">الإجراء</th>
+                </tr>
+            </thead>
+            <tbody>
+            <?php foreach ($tc_pending_wds as $twd):
+                $twname = trim(($twd->teacher_firstname ?? '') . ' ' . ($twd->teacher_lastname ?? '')) ?: '—';
+                $tapprove_url = new moodle_url('/local/referral/myaccount.php', [
+                    'approveaction' => 'approve', 'approvewid' => $twd->id,
+                    'approvetype'   => 'teacher', 'sesskey' => sesskey(),
+                ]);
+                $treject_url = new moodle_url('/local/referral/myaccount.php', [
+                    'approveaction' => 'reject',  'approvewid' => $twd->id,
+                    'approvetype'   => 'teacher', 'sesskey' => sesskey(),
+                ]);
+            ?>
+                <tr>
+                    <td style="font-weight:700;"><?php echo s($twname); ?></td>
+                    <td style="text-align:left;font-weight:800;color:#059669;"><?php echo number_format($twd->amount, 2); ?></td>
+                    <td style="font-size:.78rem;color:var(--m);"><?php echo s($twd->currency); ?></td>
+                    <td style="color:var(--m);font-size:.78rem;"><?php echo userdate($twd->timecreated, '%d/%m/%Y'); ?></td>
+                    <td style="text-align:center;">
+                        <div style="display:flex;gap:5px;justify-content:center;">
+                            <a href="<?php echo $tapprove_url->out(false); ?>" class="btn-wd"
+                               style="font-size:.75rem;padding:5px 12px;background:#059669;"
+                               onclick="return confirm('الموافقة على سحب المعلم <?php echo number_format($twd->amount, 2); ?>؟')">
+                                موافقة
+                            </a>
+                            <a href="<?php echo $treject_url->out(false); ?>" class="btn-wd"
+                               style="font-size:.75rem;padding:5px 12px;background:#dc2626;"
+                               onclick="return confirm('رفض طلب السحب؟')">
+                                رفض
+                            </a>
+                        </div>
+                    </td>
+                </tr>
+            <?php endforeach; ?>
+            </tbody>
+        </table>
+        </div>
+    <?php endif; ?>
+
+    </div>
+</div>
+<?php endif; ?>
 
 <!-- ── Sub-marketers ── -->
 <?php if (!empty($sub_marketers)): ?>

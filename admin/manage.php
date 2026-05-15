@@ -19,6 +19,14 @@ $confirm    = optional_param('confirm', 0, PARAM_BOOL);
 $now        = time();
 $sess       = sesskey();
 
+// ── Helper: resolve marketer type from profile (fallback from parent_userid if type col missing) ──
+function local_referral_get_type(\stdClass $mp): string {
+    if (!empty($mp->type)) {
+        return $mp->type;
+    }
+    return (!empty($mp->parent_userid)) ? 'sub' : 'main';
+}
+
 $base_url = new moodle_url('/local/referral/admin/manage.php');
 
 $min_withdrawal = (float)(get_config('local_referral', 'min_withdrawal') ?: 10);
@@ -58,6 +66,46 @@ if ($action === 'setparent' && $marketerid && confirm_sesskey()) {
     $DB->set_field('local_ref_marketer_profile', 'parent_userid', $parentid ?: null, ['userid' => $marketerid]);
     $DB->set_field('local_ref_marketer_profile', 'timemodified',  $now,              ['userid' => $marketerid]);
     redirect($base_url, 'تم تحديث المسوق الأب.', 2);
+}
+
+/* =====================================================
+   ACTION: تحويل المسوق إلى نوع محدد (main / sub)
+===================================================== */
+if ($action === 'settype' && $marketerid && confirm_sesskey()) {
+    $newtype  = optional_param('newtype', 'main', PARAM_ALPHA);
+    $parentid = optional_param('parentid', 0, PARAM_INT);
+
+    $profile = $DB->get_record('local_ref_marketer_profile', ['userid' => $marketerid], '*', IGNORE_MISSING);
+    if (!$profile) {
+        redirect($base_url, 'المسوق غير موجود.', 2);
+    }
+
+    if ($newtype === 'main') {
+        // Promote to main: clear parent, update type.
+        $DB->set_field('local_ref_marketer_profile', 'parent_userid', null, ['userid' => $marketerid]);
+        $DB->set_field('local_ref_marketer_profile', 'type', 'main',         ['userid' => $marketerid]);
+        $DB->set_field('local_ref_marketer_profile', 'timemodified', $now,   ['userid' => $marketerid]);
+        redirect($base_url, 'تم تحويل المسوق إلى مسوق رئيسي.', 2);
+
+    } elseif ($newtype === 'sub') {
+        if ($parentid <= 0 || $parentid === $marketerid) {
+            redirect($base_url, 'يجب تحديد مسوق رئيسي صالح.', 2);
+        }
+        // Prevent: sub cannot become parent of existing sub-marketers.
+        $has_subs = $DB->record_exists('local_ref_marketer_profile', ['parent_userid' => $marketerid]);
+        if ($has_subs) {
+            redirect($base_url, 'لا يمكن تحويل مسوق لديه مسوقون فرعيون إلى مسوق فرعي.', 2);
+        }
+        // Prevent circular: parent must be a main marketer (not a sub himself).
+        $parent = $DB->get_record('local_ref_marketer_profile', ['userid' => $parentid], 'type, parent_userid', IGNORE_MISSING);
+        if (!$parent || local_referral_get_type($parent) !== 'main') {
+            redirect($base_url, 'يجب أن يكون الأب مسوقاً رئيسياً.', 2);
+        }
+        $DB->set_field('local_ref_marketer_profile', 'parent_userid', $parentid, ['userid' => $marketerid]);
+        $DB->set_field('local_ref_marketer_profile', 'type', 'sub',              ['userid' => $marketerid]);
+        $DB->set_field('local_ref_marketer_profile', 'timemodified', $now,       ['userid' => $marketerid]);
+        redirect($base_url, 'تم تعيين المسوق الفرعي بنجاح.', 2);
+    }
 }
 
 /* =====================================================
@@ -212,8 +260,12 @@ if ($delete) {
 }
 
 // LEFT JOIN so marketers whose Moodle account was deleted still appear.
+// Coalesce type from DB field; fall back to deriving it from parent_userid.
 $marketers = $DB->get_records_sql(
     "SELECT mp.userid, mp.code, mp.commission_percentage, mp.parent_userid,
+            CASE WHEN mp.type IS NOT NULL AND mp.type <> '' THEN mp.type
+                 WHEN mp.parent_userid IS NOT NULL AND mp.parent_userid > 0 THEN 'sub'
+                 ELSE 'main' END AS type,
             u.firstname, u.lastname, u.email,
             pu.firstname AS parentfirstname, pu.lastname AS parentlastname,
             pm.code AS parentcode
@@ -570,6 +622,7 @@ if (empty($marketers)) {
     echo '<div class="ref-tbl-scroll"><table class="ref-tbl"><thead><tr>
         <th>المسوق</th>
         <th>الكود</th>
+        <th style="text-align:center;">النوع</th>
         <th style="text-align:center;">المُحالون</th>
         <th>العمولة %</th>';
     if ($enable_parent) {
@@ -651,6 +704,66 @@ if (empty($marketers)) {
             'delete' => $m->userid, 'sesskey' => $sess,
         ]))->out(false);
 
+        // Type badge & convert button.
+        $mtype     = $m->type ?? ((!empty($m->parent_userid)) ? 'sub' : 'main');
+        $type_cls  = ($mtype === 'main') ? 'rb-green' : 'rb-gray';
+        $type_lbl  = ($mtype === 'main') ? 'رئيسي' : 'فرعي';
+        $type_badge = '<span class="rb ' . $type_cls . '" style="margin-bottom:4px;display:inline-block;">' . $type_lbl . '</span>';
+
+        // Convert button (inline form).
+        if ($mtype === 'sub') {
+            // Show parent name always for sub-marketers.
+            $parent_info = '';
+            if (!empty($m->parentfirstname) || !empty($m->parentlastname)) {
+                $pname = htmlspecialchars(trim(($m->parentfirstname ?? '') . ' ' . ($m->parentlastname ?? '')));
+                $pcode = htmlspecialchars($m->parentcode ?? '');
+                $parent_info = '<div style="font-size:.72rem;color:var(--rm);margin:3px 0 4px;">'
+                    . 'تابع: <strong style="color:var(--rd);">' . $pname . '</strong>'
+                    . ($pcode !== '' ? ' <span class="rb rb-gray" style="font-size:.65rem;">' . $pcode . '</span>' : '')
+                    . '</div>';
+            }
+            // Convert to main.
+            $type_btn = $parent_info . '
+            <form method="post" action="' . $base_out . '" style="margin-top:2px;">
+                <input type="hidden" name="action"     value="settype">
+                <input type="hidden" name="marketerid" value="' . $m->userid . '">
+                <input type="hidden" name="newtype"    value="main">
+                <input type="hidden" name="sesskey"    value="' . $sess . '">
+                <button type="submit" class="ref-btn btn-g" style="font-size:.7rem;padding:4px 9px;"
+                    onclick="return confirm(\'تحويل ' . addslashes($fullname) . ' إلى مسوق رئيسي؟\')">
+                    ↑ رئيسي
+                </button>
+            </form>';
+        } else {
+            // Convert to sub — show dropdown of main marketers.
+            $opts = '<option value="0">— اختر مسوقاً رئيسياً —</option>';
+            foreach ($all_marketers as $pm) {
+                if ($pm->userid == $m->userid) continue;
+                $pm_type = $DB->get_field('local_ref_marketer_profile', 'type', ['userid' => $pm->userid]) ?: 'main';
+                if ($pm_type !== 'main') continue; // only allow assigning to main marketers
+                $opts .= '<option value="' . $pm->userid . '">'
+                       . htmlspecialchars(trim($pm->firstname . ' ' . $pm->lastname))
+                       . ' (' . htmlspecialchars($pm->code) . ')</option>';
+            }
+            $has_subs = $DB->record_exists('local_ref_marketer_profile', ['parent_userid' => $m->userid]);
+            if (!$has_subs) {
+                $type_btn = '
+                <form method="post" action="' . $base_out . '" style="margin-top:4px;display:flex;gap:4px;">
+                    <input type="hidden" name="action"     value="settype">
+                    <input type="hidden" name="marketerid" value="' . $m->userid . '">
+                    <input type="hidden" name="newtype"    value="sub">
+                    <input type="hidden" name="sesskey"    value="' . $sess . '">
+                    <select name="parentid" class="ref-input" style="padding:4px 7px;font-size:.72rem;min-width:110px;">' . $opts . '</select>
+                    <button type="submit" class="ref-btn btn-o" style="font-size:.7rem;padding:4px 9px;"
+                        onclick="return this.form.parentid.value > 0 || (alert(\'اختر مسوقاً رئيسياً\'),false)">
+                        ↓ فرعي
+                    </button>
+                </form>';
+            } else {
+                $type_btn = '<span style="font-size:.7rem;color:var(--rm);">لديه فرعيون</span>';
+            }
+        }
+
         echo '
         <tr>
             <td>
@@ -658,6 +771,9 @@ if (empty($marketers)) {
                 <div class="u-email">' . $email . '</div>
             </td>
             <td><span class="rb rb-blue">' . htmlspecialchars($m->code) . '</span></td>
+            <td style="text-align:center;min-width:110px;">
+                ' . $type_badge . $type_btn . '
+            </td>
             <td>
                 <div class="ref-num">' . $st['referred'] . '</div>
                 <div class="ref-num-lbl">مستخدم</div>
