@@ -357,5 +357,24 @@ function xmldb_local_referral_upgrade($oldversion)
         upgrade_plugin_savepoint(true, 2026051100, 'local', 'referral');
     }
 
+    // =========================================================================
+    // 2026051700 — Add indirect_commission_percentage to marketer profiles.
+    //              Used when a main marketer earns from a sub-marketer's sale.
+    // =========================================================================
+    if ($oldversion < 2026051700) {
+
+        $profile_tbl = new xmldb_table('local_ref_marketer_profile');
+
+        if (!$dbman->field_exists($profile_tbl, new xmldb_field('indirect_commission_percentage'))) {
+            $f = new xmldb_field(
+                'indirect_commission_percentage', XMLDB_TYPE_INTEGER, '10',
+                null, XMLDB_NOTNULL, null, '0', 'commission_percentage'
+            );
+            $dbman->add_field($profile_tbl, $f);
+        }
+
+        upgrade_plugin_savepoint(true, 2026051700, 'local', 'referral');
+    }
+
     return true;
 }

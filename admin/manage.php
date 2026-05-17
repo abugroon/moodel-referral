@@ -112,9 +112,10 @@ if ($action === 'settype' && $marketerid && confirm_sesskey()) {
    ACTION: تحديث نسبة العمولة
 ===================================================== */
 if ($action === 'setcommission' && $marketerid && confirm_sesskey()) {
-    $pct = optional_param('commission', 10, PARAM_INT);
-    $pct = max(0, min(100, $pct));
-    $DB->set_field('local_ref_marketer_profile', 'commission_percentage', $pct, ['userid' => $marketerid]);
+    $pct        = max(0, min(100, optional_param('commission', 10, PARAM_INT)));
+    $indirect   = max(0, min(100, optional_param('indirect_commission', 0, PARAM_INT)));
+    $DB->set_field('local_ref_marketer_profile', 'commission_percentage',          $pct,      ['userid' => $marketerid]);
+    $DB->set_field('local_ref_marketer_profile', 'indirect_commission_percentage', $indirect, ['userid' => $marketerid]);
     $DB->set_field('local_ref_marketer_profile', 'timemodified', $now, ['userid' => $marketerid]);
     redirect($base_url, 'تم تحديث نسبة العمولة.', 2);
 }
@@ -262,7 +263,7 @@ if ($delete) {
 // LEFT JOIN so marketers whose Moodle account was deleted still appear.
 // Coalesce type from DB field; fall back to deriving it from parent_userid.
 $marketers = $DB->get_records_sql(
-    "SELECT mp.userid, mp.code, mp.commission_percentage, mp.parent_userid,
+    "SELECT mp.userid, mp.code, mp.commission_percentage, mp.indirect_commission_percentage, mp.parent_userid,
             CASE WHEN mp.type IS NOT NULL AND mp.type <> '' THEN mp.type
                  WHEN mp.parent_userid IS NOT NULL AND mp.parent_userid > 0 THEN 'sub'
                  ELSE 'main' END AS type,
@@ -624,7 +625,8 @@ if (empty($marketers)) {
         <th>الكود</th>
         <th style="text-align:center;">النوع</th>
         <th style="text-align:center;">المُحالون</th>
-        <th>العمولة %</th>';
+        <th>العمولة المباشرة %</th>
+        <th>العمولة غير المباشرة %</th>';
     if ($enable_parent) {
         echo '<th>المسوق الأب</th>';
     }
@@ -640,13 +642,30 @@ if (empty($marketers)) {
         $email    = htmlspecialchars($m->email ?? '—');
         $refurl   = (new moodle_url('/', ['ref' => $m->code]))->out(false);
 
+        $indirect_pct = (int)($m->indirect_commission_percentage ?? 0);
         $comm_form = '
-        <form method="post" action="' . $base_out . '" class="comm-form">
+        <form method="post" action="' . $base_out . '" class="comm-form" style="flex-direction:column;align-items:flex-start;gap:6px;">
             <input type="hidden" name="action"     value="setcommission">
             <input type="hidden" name="marketerid" value="' . $m->userid . '">
             <input type="hidden" name="sesskey"    value="' . $sess . '">
-            <input type="number" name="commission" value="' . (int)$m->commission_percentage . '" min="0" max="100">
-            <button type="submit" class="ref-btn btn-p" title="حفظ">&#x2713;</button>
+            <div style="display:flex;gap:4px;align-items:center;">
+                <input type="number" name="commission" value="' . (int)$m->commission_percentage . '"
+                       min="0" max="100" title="العمولة المباشرة">
+            </div>
+            <button type="submit" class="ref-btn btn-p" style="align-self:flex-start;" title="حفظ">&#x2713;</button>
+        </form>';
+
+        $indirect_form = '
+        <form method="post" action="' . $base_out . '" class="comm-form" style="flex-direction:column;align-items:flex-start;gap:6px;">
+            <input type="hidden" name="action"              value="setcommission">
+            <input type="hidden" name="marketerid"          value="' . $m->userid . '">
+            <input type="hidden" name="sesskey"             value="' . $sess . '">
+            <input type="hidden" name="commission"          value="' . (int)$m->commission_percentage . '">
+            <div style="display:flex;gap:4px;align-items:center;">
+                <input type="number" name="indirect_commission" value="' . $indirect_pct . '"
+                       min="0" max="100" title="العمولة غير المباشرة">
+            </div>
+            <button type="submit" class="ref-btn btn-p" style="align-self:flex-start;" title="حفظ">&#x2713;</button>
         </form>';
 
         $parent_cell = '';
@@ -779,6 +798,7 @@ if (empty($marketers)) {
                 <div class="ref-num-lbl">مستخدم</div>
             </td>
             <td>' . $comm_form . '</td>
+            <td>' . $indirect_form . '</td>
             ' . $parent_cell . '
             <td style="font-weight:700;color:var(--rd);">' . number_format($st['total'], 2) . '</td>
             <td>' . $stats_html . '</td>

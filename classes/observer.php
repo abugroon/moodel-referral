@@ -138,7 +138,7 @@ class observer {
             $parent = $DB->get_record(
                 'local_ref_marketer_profile',
                 ['userid' => $profile->parent_userid],
-                'userid, commission_percentage',
+                'userid, commission_percentage, indirect_commission_percentage',
                 IGNORE_MISSING
             );
 
@@ -151,7 +151,7 @@ class observer {
                 ]);
 
                 if (!$parentExists) {
-                    $parentPercentage = max(0, min(100, (int)$parent->commission_percentage));
+                    $parentPercentage = max(0, min(100, (int)$parent->indirect_commission_percentage));
                     $parentCommission = round(($amount * $parentPercentage) / 100, 2);
 
                     $DB->insert_record('local_ref_commissions', (object)[
