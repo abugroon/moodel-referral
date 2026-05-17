@@ -137,23 +137,81 @@ if ($requestwithdraw && confirm_sesskey()) {
         ]);
         $withdrawmsg = 'success:تم إرسال طلب السحب بنجاح! سيتم مراجعته من قِبَل الإدارة.';
 
+        // ── Build shared email content ──────────────────────────────────────
+        $marketer_name = fullname($USER);
+        $date_str      = userdate(time(), '%d/%m/%Y %H:%M');
+        $amount_str    = number_format($withdrawamount, 2);
+        $noreply       = \core_user::get_noreply_user();
+
+        // ── 1. Notify main marketer (only when this is a sub-marketer request) ─
+        if ($main_for_wd > 0) {
+            $main_user = $DB->get_record('user', ['id' => $main_for_wd], '*', IGNORE_MISSING);
+            if ($main_user) {
+                $review_url   = (new moodle_url('/local/referral/myaccount.php'))->out(false);
+                $subject_main = 'طلب سحب جديد من مسوق فرعي – ' . $marketer_name;
+                $plain_main   = "عزيزي " . fullname($main_user) . ",\n\n"
+                              . "تم إرسال طلب سحب جديد يحتاج إلى مراجعتك.\n\n"
+                              . "──────────────────────────\n"
+                              . "المسوق  : {$marketer_name}\n"
+                              . "المبلغ  : {$amount_str}\n"
+                              . "التاريخ : {$date_str}\n"
+                              . "──────────────────────────\n\n"
+                              . "رابط المراجعة: {$review_url}";
+                $html_main    = "<div dir='rtl' style='font-family:Arial,sans-serif;max-width:520px;'>"
+                              . "<p>عزيزي <strong>" . s(fullname($main_user)) . "</strong>،</p>"
+                              . "<p>تم إرسال طلب سحب جديد يحتاج إلى مراجعتك.</p>"
+                              . "<table style='border-collapse:collapse;width:100%;font-size:14px;'>"
+                              . "<tr style='background:#f8fafc;'>"
+                              .   "<td style='padding:10px 14px;border:1px solid #e2e8f0;font-weight:700;color:#374151;'>المسوق</td>"
+                              .   "<td style='padding:10px 14px;border:1px solid #e2e8f0;'>" . s($marketer_name) . "</td>"
+                              . "</tr><tr>"
+                              .   "<td style='padding:10px 14px;border:1px solid #e2e8f0;font-weight:700;color:#374151;'>المبلغ</td>"
+                              .   "<td style='padding:10px 14px;border:1px solid #e2e8f0;font-size:16px;font-weight:800;color:#059669;'>{$amount_str}</td>"
+                              . "</tr><tr style='background:#f8fafc;'>"
+                              .   "<td style='padding:10px 14px;border:1px solid #e2e8f0;font-weight:700;color:#374151;'>التاريخ</td>"
+                              .   "<td style='padding:10px 14px;border:1px solid #e2e8f0;'>{$date_str}</td>"
+                              . "</tr></table>"
+                              . "<p style='margin-top:18px;'>"
+                              .   "<a href='{$review_url}' style='display:inline-block;padding:10px 22px;"
+                              .   "background:#2563eb;color:#fff;border-radius:8px;text-decoration:none;"
+                              .   "font-weight:700;font-size:14px;'>مراجعة الطلب</a>"
+                              . "</p>"
+                              . "<p style='font-size:12px;color:#94a3b8;'>هذا إشعار تلقائي من منصة التسويق.</p>"
+                              . "</div>";
+                email_to_user($main_user, $noreply, $subject_main, $plain_main, $html_main);
+            }
+        }
+
+        // ── 2. Notify admins via notification_emails setting (all requests) ──
         $notification_emails_raw = get_config('local_referral', 'notification_emails');
         if (!empty($notification_emails_raw)) {
-            $marketer_name = fullname($USER);
-            $manage_url    = (new moodle_url('/local/referral/admin/manage.php'))->out(false);
-            $subject       = '[إشعار] طلب سحب جديد من مسوق';
-            $body_plain    = "طلب سحب جديد\n\nالمسوق: {$marketer_name}\nالمبلغ: "
-                           . number_format($withdrawamount, 2) . "\nرابط الإدارة: {$manage_url}";
-            $body_html     = "<div dir='rtl' style='font-family:Arial;'>"
-                           . "<h3 style='color:#2563eb;'>طلب سحب جديد</h3>"
-                           . "<p>المسوق: <strong>{$marketer_name}</strong></p>"
-                           . "<p>المبلغ: <strong style='color:#059669;font-size:1.1rem;'>"
-                           . number_format($withdrawamount, 2) . "</strong></p>"
-                           . "<p><a href='{$manage_url}' style='background:#2563eb;color:#fff;padding:9px 18px;"
-                           . "border-radius:7px;text-decoration:none;font-weight:700;'>مراجعة الطلب</a></p></div>";
+            $manage_url   = (new moodle_url('/local/referral/admin/manage.php'))->out(false);
+            $subject_adm  = '[إشعار] طلب سحب جديد من مسوق – ' . $marketer_name;
+            $plain_adm    = "طلب سحب جديد\n\n"
+                          . "المسوق  : {$marketer_name}\n"
+                          . "المبلغ  : {$amount_str}\n"
+                          . "التاريخ : {$date_str}\n\n"
+                          . "رابط الإدارة: {$manage_url}";
+            $html_adm     = "<div dir='rtl' style='font-family:Arial,sans-serif;max-width:520px;'>"
+                          . "<p>طلب سحب جديد من مسوق يحتاج مراجعة.</p>"
+                          . "<table style='border-collapse:collapse;width:100%;font-size:14px;'>"
+                          . "<tr style='background:#f8fafc;'>"
+                          .   "<td style='padding:10px 14px;border:1px solid #e2e8f0;font-weight:700;'>المسوق</td>"
+                          .   "<td style='padding:10px 14px;border:1px solid #e2e8f0;'>" . s($marketer_name) . "</td>"
+                          . "</tr><tr>"
+                          .   "<td style='padding:10px 14px;border:1px solid #e2e8f0;font-weight:700;'>المبلغ</td>"
+                          .   "<td style='padding:10px 14px;border:1px solid #e2e8f0;font-size:16px;font-weight:800;color:#059669;'>{$amount_str}</td>"
+                          . "</tr><tr style='background:#f8fafc;'>"
+                          .   "<td style='padding:10px 14px;border:1px solid #e2e8f0;font-weight:700;'>التاريخ</td>"
+                          .   "<td style='padding:10px 14px;border:1px solid #e2e8f0;'>{$date_str}</td>"
+                          . "</tr></table>"
+                          . "<p style='margin-top:18px;'>"
+                          .   "<a href='{$manage_url}' style='display:inline-block;padding:10px 22px;"
+                          .   "background:#2563eb;color:#fff;border-radius:8px;text-decoration:none;"
+                          .   "font-weight:700;font-size:14px;'>مراجعة الطلب</a>"
+                          . "</p></div>";
 
-            $noreply = \core_user::get_noreply_user();
-            $emails  = array_filter(array_map('trim', explode(',', $notification_emails_raw)));
+            $emails = array_filter(array_map('trim', explode(',', $notification_emails_raw)));
             foreach ($emails as $email) {
                 if (!validate_email($email)) { continue; }
                 $recipient = (object)[
@@ -162,7 +220,7 @@ if ($requestwithdraw && confirm_sesskey()) {
                     'firstnamephonetic' => '', 'lastnamephonetic' => '', 'middlename' => '',
                     'alternatename' => '', 'auth' => 'manual', 'username' => $email,
                 ];
-                email_to_user($recipient, $noreply, $subject, $body_plain, $body_html);
+                email_to_user($recipient, $noreply, $subject_adm, $plain_adm, $html_adm);
             }
         }
     }
