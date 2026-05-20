@@ -40,15 +40,18 @@ if ($save && confirm_sesskey()) {
     if ($errormsg === '') {
         $now = time();
 
-        // نسبة العمولة الافتراضية من الإعدادات أو 10%
-        $default_pct = (int)get_config('local_referral', 'default_commission_percentage') ?: 10;
+        // نسب العمولة الافتراضية من الإعدادات
+        $default_pct          = (int)(get_config('local_referral', 'default_commission_percentage') ?: 10);
+        $default_indirect_pct = (int)(get_config('local_referral', 'default_indirect_commission_percentage') ?: 0);
 
         $DB->insert_record('local_ref_marketer_profile', (object)[
-            'userid'                => $USER->id,
-            'code'                  => $refcode,
-            'commission_percentage' => $default_pct,
-            'timecreated'           => $now,
-            'timemodified'          => $now,
+            'userid'                          => $USER->id,
+            'code'                            => $refcode,
+            'commission_percentage'           => $default_pct,
+            'indirect_commission_percentage'  => $default_indirect_pct,
+            'type'                            => 'main',
+            'timecreated'                     => $now,
+            'timemodified'                    => $now,
         ]);
 
         redirect(new moodle_url('/local/referral/myaccount.php'),

@@ -17,9 +17,17 @@ if ($hassiteconfig) {
 
     $settingspage->add(new admin_setting_configtext(
         'local_referral/default_commission_percentage',
-        'نسبة العمولة الافتراضية (%)',
-        'النسبة المئوية التي تُطبَّق تلقائياً على المسوق عند التسجيل.',
+        'نسبة العمولة المباشرة الافتراضية (%)',
+        'النسبة المئوية للعمولة المباشرة التي تُطبَّق تلقائياً على المسوق عند التسجيل.',
         '10',
+        PARAM_INT
+    ));
+
+    $settingspage->add(new admin_setting_configtext(
+        'local_referral/default_indirect_commission_percentage',
+        'نسبة العمولة غير المباشرة الافتراضية (%)',
+        'النسبة المئوية للعمولة غير المباشرة (للمسوق الرئيسي عند بيع تابعيه). تُطبَّق تلقائياً عند التسجيل.',
+        '0',
         PARAM_INT
     ));
 

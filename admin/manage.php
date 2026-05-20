@@ -29,18 +29,21 @@ function local_referral_get_type(\stdClass $mp): string {
 
 $base_url = new moodle_url('/local/referral/admin/manage.php');
 
-$min_withdrawal = (float)(get_config('local_referral', 'min_withdrawal') ?: 10);
-$def_commission = (int)(get_config('local_referral', 'default_commission_percentage') ?: 10);
-$enable_parent  = (bool)(get_config('local_referral', 'enable_parent_linking') ?: 0);
+$min_withdrawal      = (float)(get_config('local_referral', 'min_withdrawal') ?: 10);
+$def_commission      = (int)(get_config('local_referral', 'default_commission_percentage') ?: 10);
+$def_indirect        = (int)(get_config('local_referral', 'default_indirect_commission_percentage') ?: 0);
+$enable_parent       = (bool)(get_config('local_referral', 'enable_parent_linking') ?: 0);
 
 /* =====================================================
    ACTION: حفظ الإعدادات
 ===================================================== */
 if ($action === 'savesettings' && confirm_sesskey()) {
-    $new_min = optional_param('min_withdrawal', 10, PARAM_FLOAT);
-    $new_def = optional_param('default_commission', 10, PARAM_INT);
+    $new_min      = optional_param('min_withdrawal', 10, PARAM_FLOAT);
+    $new_def      = optional_param('default_commission', 10, PARAM_INT);
+    $new_indirect = optional_param('default_indirect_commission', 0, PARAM_INT);
     set_config('min_withdrawal', max(0, $new_min), 'local_referral');
     set_config('default_commission_percentage', max(0, min(100, $new_def)), 'local_referral');
+    set_config('default_indirect_commission_percentage', max(0, min(100, $new_indirect)), 'local_referral');
     redirect($base_url, 'تم حفظ الإعدادات بنجاح.', 2);
 }
 
@@ -278,7 +281,11 @@ $marketers = $DB->get_records_sql(
 );
 
 $all_marketers = $DB->get_records_sql(
-    "SELECT mp.userid, mp.code, u.firstname, u.lastname
+    "SELECT mp.userid, mp.code, mp.type,
+            CASE WHEN mp.type IS NOT NULL AND mp.type <> '' THEN mp.type
+                 WHEN mp.parent_userid IS NOT NULL AND mp.parent_userid > 0 THEN 'sub'
+                 ELSE 'main' END AS resolved_type,
+            u.firstname, u.lastname
        FROM {local_ref_marketer_profile} mp
   LEFT JOIN {user} u ON u.id = mp.userid
       ORDER BY COALESCE(u.firstname, 'zzz') ASC"
@@ -591,11 +598,18 @@ echo '
                         <span class="ref-fhint">أقل مبلغ يمكن للمسوق طلبه</span>
                     </div>
                     <div class="ref-field">
-                        <label for="defComm">نسبة العمولة الافتراضية (%)</label>
+                        <label for="defComm">نسبة العمولة المباشرة الافتراضية (%)</label>
                         <input type="number" id="defComm" name="default_commission" class="ref-input"
                                value="' . $def_commission . '"
                                min="0" max="100" step="1" required>
-                        <span class="ref-fhint">تُطبَّق تلقائياً على المسوق عند التسجيل</span>
+                        <span class="ref-fhint">تُطبَّق على المسوق الجديد عند التسجيل</span>
+                    </div>
+                    <div class="ref-field">
+                        <label for="defIndirect">نسبة العمولة غير المباشرة الافتراضية (%)</label>
+                        <input type="number" id="defIndirect" name="default_indirect_commission" class="ref-input"
+                               value="' . $def_indirect . '"
+                               min="0" max="100" step="1" required>
+                        <span class="ref-fhint">تُطبَّق على المسوق الرئيسي عند تسجيل مسوق تابع له</span>
                     </div>
                     <div class="ref-field" style="justify-content:flex-end;">
                         <button type="submit" class="ref-btn btn-p" style="padding:9px 20px;">حفظ الإعدادات</button>
@@ -625,8 +639,7 @@ if (empty($marketers)) {
         <th>الكود</th>
         <th style="text-align:center;">النوع</th>
         <th style="text-align:center;">المُحالون</th>
-        <th>العمولة المباشرة %</th>
-        <th>العمولة غير المباشرة %</th>';
+        <th>النسب (مباشر / غير مباشر)</th>';
     if ($enable_parent) {
         echo '<th>المسوق الأب</th>';
     }
@@ -648,24 +661,22 @@ if (empty($marketers)) {
             <input type="hidden" name="action"     value="setcommission">
             <input type="hidden" name="marketerid" value="' . $m->userid . '">
             <input type="hidden" name="sesskey"    value="' . $sess . '">
-            <div style="display:flex;gap:4px;align-items:center;">
-                <input type="number" name="commission" value="' . (int)$m->commission_percentage . '"
-                       min="0" max="100" title="العمولة المباشرة">
+            <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap;">
+                <div style="display:flex;flex-direction:column;gap:2px;">
+                    <span style="font-size:.67rem;color:var(--rm);text-align:center;">مباشر</span>
+                    <input type="number" name="commission" value="' . (int)$m->commission_percentage . '"
+                           min="0" max="100" title="العمولة المباشرة" style="width:62px;">
+                </div>
+                <div style="display:flex;flex-direction:column;gap:2px;">
+                    <span style="font-size:.67rem;color:var(--rm);text-align:center;">غير مباشر</span>
+                    <input type="number" name="indirect_commission" value="' . $indirect_pct . '"
+                           min="0" max="100" title="العمولة غير المباشرة" style="width:62px;">
+                </div>
+                <div style="display:flex;flex-direction:column;gap:2px;">
+                    <span style="font-size:.67rem;color:transparent;">.</span>
+                    <button type="submit" class="ref-btn btn-p" title="حفظ">&#x2713;</button>
+                </div>
             </div>
-            <button type="submit" class="ref-btn btn-p" style="align-self:flex-start;" title="حفظ">&#x2713;</button>
-        </form>';
-
-        $indirect_form = '
-        <form method="post" action="' . $base_out . '" class="comm-form" style="flex-direction:column;align-items:flex-start;gap:6px;">
-            <input type="hidden" name="action"              value="setcommission">
-            <input type="hidden" name="marketerid"          value="' . $m->userid . '">
-            <input type="hidden" name="sesskey"             value="' . $sess . '">
-            <input type="hidden" name="commission"          value="' . (int)$m->commission_percentage . '">
-            <div style="display:flex;gap:4px;align-items:center;">
-                <input type="number" name="indirect_commission" value="' . $indirect_pct . '"
-                       min="0" max="100" title="العمولة غير المباشرة">
-            </div>
-            <button type="submit" class="ref-btn btn-p" style="align-self:flex-start;" title="حفظ">&#x2713;</button>
         </form>';
 
         $parent_cell = '';
@@ -723,8 +734,8 @@ if (empty($marketers)) {
             'delete' => $m->userid, 'sesskey' => $sess,
         ]))->out(false);
 
-        // Type badge & convert button.
-        $mtype     = $m->type ?? ((!empty($m->parent_userid)) ? 'sub' : 'main');
+        // Type badge & convert button — type is already resolved by SQL CASE WHEN.
+        $mtype     = $m->type;
         $type_cls  = ($mtype === 'main') ? 'rb-green' : 'rb-gray';
         $type_lbl  = ($mtype === 'main') ? 'رئيسي' : 'فرعي';
         $type_badge = '<span class="rb ' . $type_cls . '" style="margin-bottom:4px;display:inline-block;">' . $type_lbl . '</span>';
@@ -758,8 +769,7 @@ if (empty($marketers)) {
             $opts = '<option value="0">— اختر مسوقاً رئيسياً —</option>';
             foreach ($all_marketers as $pm) {
                 if ($pm->userid == $m->userid) continue;
-                $pm_type = $DB->get_field('local_ref_marketer_profile', 'type', ['userid' => $pm->userid]) ?: 'main';
-                if ($pm_type !== 'main') continue; // only allow assigning to main marketers
+                if (($pm->resolved_type ?? 'main') !== 'main') continue;
                 $opts .= '<option value="' . $pm->userid . '">'
                        . htmlspecialchars(trim($pm->firstname . ' ' . $pm->lastname))
                        . ' (' . htmlspecialchars($pm->code) . ')</option>';
@@ -798,7 +808,6 @@ if (empty($marketers)) {
                 <div class="ref-num-lbl">مستخدم</div>
             </td>
             <td>' . $comm_form . '</td>
-            <td>' . $indirect_form . '</td>
             ' . $parent_cell . '
             <td style="font-weight:700;color:var(--rd);">' . number_format($st['total'], 2) . '</td>
             <td>' . $stats_html . '</td>
