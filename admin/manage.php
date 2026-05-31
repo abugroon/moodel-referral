@@ -66,7 +66,9 @@ if ($action === 'setparent' && $marketerid && confirm_sesskey()) {
     if ($parentid == $marketerid) {
         redirect($base_url, 'لا يمكن ربط المسوق بنفسه.', 2);
     }
+    $new_type = ($parentid > 0) ? 'sub' : 'main';
     $DB->set_field('local_ref_marketer_profile', 'parent_userid', $parentid ?: null, ['userid' => $marketerid]);
+    $DB->set_field('local_ref_marketer_profile', 'type',          $new_type,         ['userid' => $marketerid]);
     $DB->set_field('local_ref_marketer_profile', 'timemodified',  $now,              ['userid' => $marketerid]);
     redirect($base_url, 'تم تحديث المسوق الأب.', 2);
 }
@@ -638,12 +640,8 @@ if (empty($marketers)) {
         <th>المسوق</th>
         <th>الكود</th>
         <th style="text-align:center;">النوع</th>
-        <th style="text-align:center;">المُحالون</th>
-        <th>النسب (مباشر / غير مباشر)</th>';
-    if ($enable_parent) {
-        echo '<th>المسوق الأب</th>';
-    }
-    echo '<th>الإجمالي</th>
+        <th>المسوق الأب</th>
+        <th>الإجمالي</th>
         <th>تفاصيل</th>
         <th style="text-align:center;">الإجراءات</th>
     </tr></thead><tbody>';
@@ -655,63 +653,8 @@ if (empty($marketers)) {
         $email    = htmlspecialchars($m->email ?? '—');
         $refurl   = (new moodle_url('/', ['ref' => $m->code]))->out(false);
 
-        $indirect_pct = (int)($m->indirect_commission_percentage ?? 0);
-        $comm_form = '
-        <form method="post" action="' . $base_out . '" class="comm-form" style="flex-direction:column;align-items:flex-start;gap:6px;">
-            <input type="hidden" name="action"     value="setcommission">
-            <input type="hidden" name="marketerid" value="' . $m->userid . '">
-            <input type="hidden" name="sesskey"    value="' . $sess . '">
-            <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap;">
-                <div style="display:flex;flex-direction:column;gap:2px;">
-                    <span style="font-size:.67rem;color:var(--rm);text-align:center;">مباشر</span>
-                    <input type="number" name="commission" value="' . (int)$m->commission_percentage . '"
-                           min="0" max="100" title="العمولة المباشرة" style="width:62px;">
-                </div>
-                <div style="display:flex;flex-direction:column;gap:2px;">
-                    <span style="font-size:.67rem;color:var(--rm);text-align:center;">غير مباشر</span>
-                    <input type="number" name="indirect_commission" value="' . $indirect_pct . '"
-                           min="0" max="100" title="العمولة غير المباشرة" style="width:62px;">
-                </div>
-                <div style="display:flex;flex-direction:column;gap:2px;">
-                    <span style="font-size:.67rem;color:transparent;">.</span>
-                    <button type="submit" class="ref-btn btn-p" title="حفظ">&#x2713;</button>
-                </div>
-            </div>
-        </form>';
-
-        $parent_cell = '';
-        if ($enable_parent) {
-            $pname = (!empty($m->parentfirstname) || !empty($m->parentlastname))
-                ? htmlspecialchars(trim(($m->parentfirstname ?? '') . ' ' . ($m->parentlastname ?? '')))
-                  . ' <span class="rb rb-gray">(' . htmlspecialchars($m->parentcode ?? '') . ')</span>'
-                : '<span style="color:var(--rm);font-size:.78rem;">—</span>';
-
-            $options = '<option value="0"' . (empty($m->parent_userid) ? ' selected' : '') . '>— بدون أب —</option>';
-            foreach ($all_marketers as $pm) {
-                if ($pm->userid == $m->userid) continue;
-                $sel = (!empty($m->parent_userid) && $m->parent_userid == $pm->userid) ? ' selected' : '';
-                $options .= '<option value="' . $pm->userid . '"' . $sel . '>'
-                          . htmlspecialchars(trim($pm->firstname . ' ' . $pm->lastname))
-                          . ' (' . htmlspecialchars($pm->code) . ')</option>';
-            }
-
-            $parent_cell = '
-            <td>
-                <div style="margin-bottom:5px;font-size:.82rem;">' . $pname . '</div>
-                <form method="post" action="' . $base_out . '" style="display:flex;gap:4px;">
-                    <input type="hidden" name="action"     value="setparent">
-                    <input type="hidden" name="marketerid" value="' . $m->userid . '">
-                    <input type="hidden" name="sesskey"    value="' . $sess . '">
-                    <select name="parentid" class="ref-input" style="padding:4px 7px;font-size:.77rem;min-width:110px;">
-                        ' . $options . '
-                    </select>
-                    <button type="submit" class="ref-btn btn-p" title="حفظ">&#x2713;</button>
-                </form>
-            </td>';
-        }
-
         $owed     = $st['pending'] + $st['approved'];
-        $net_owed = max(0.0, $owed - $st['wd_paid']); // pending commissions minus already paid via withdrawal
+        $net_owed = max(0.0, $owed - $st['wd_paid']);
         $stats_html = '
         <div class="stat-mini">
             <div class="sm-row"><span class="sm-lbl">المستحق</span><span class="sm-val sm-pending">'  . number_format($net_owed, 2) . '</span></div>
@@ -734,64 +677,40 @@ if (empty($marketers)) {
             'delete' => $m->userid, 'sesskey' => $sess,
         ]))->out(false);
 
-        // Type badge & convert button — type is already resolved by SQL CASE WHEN.
+        // Type badge — derived from DB, no convert controls here.
         $mtype     = $m->type;
         $type_cls  = ($mtype === 'main') ? 'rb-green' : 'rb-gray';
         $type_lbl  = ($mtype === 'main') ? 'رئيسي' : 'فرعي';
-        $type_badge = '<span class="rb ' . $type_cls . '" style="margin-bottom:4px;display:inline-block;">' . $type_lbl . '</span>';
+        $type_badge = '<span class="rb ' . $type_cls . '">' . $type_lbl . '</span>';
 
-        // Convert button (inline form).
-        if ($mtype === 'sub') {
-            // Show parent name always for sub-marketers.
-            $parent_info = '';
-            if (!empty($m->parentfirstname) || !empty($m->parentlastname)) {
-                $pname = htmlspecialchars(trim(($m->parentfirstname ?? '') . ' ' . ($m->parentlastname ?? '')));
-                $pcode = htmlspecialchars($m->parentcode ?? '');
-                $parent_info = '<div style="font-size:.72rem;color:var(--rm);margin:3px 0 4px;">'
-                    . 'تابع: <strong style="color:var(--rd);">' . $pname . '</strong>'
-                    . ($pcode !== '' ? ' <span class="rb rb-gray" style="font-size:.65rem;">' . $pcode . '</span>' : '')
-                    . '</div>';
-            }
-            // Convert to main.
-            $type_btn = $parent_info . '
-            <form method="post" action="' . $base_out . '" style="margin-top:2px;">
-                <input type="hidden" name="action"     value="settype">
-                <input type="hidden" name="marketerid" value="' . $m->userid . '">
-                <input type="hidden" name="newtype"    value="main">
-                <input type="hidden" name="sesskey"    value="' . $sess . '">
-                <button type="submit" class="ref-btn btn-g" style="font-size:.7rem;padding:4px 9px;"
-                    onclick="return confirm(\'تحويل ' . addslashes($fullname) . ' إلى مسوق رئيسي؟\')">
-                    ↑ رئيسي
-                </button>
-            </form>';
-        } else {
-            // Convert to sub — show dropdown of main marketers.
-            $opts = '<option value="0">— اختر مسوقاً رئيسياً —</option>';
-            foreach ($all_marketers as $pm) {
-                if ($pm->userid == $m->userid) continue;
-                if (($pm->resolved_type ?? 'main') !== 'main') continue;
-                $opts .= '<option value="' . $pm->userid . '">'
-                       . htmlspecialchars(trim($pm->firstname . ' ' . $pm->lastname))
-                       . ' (' . htmlspecialchars($pm->code) . ')</option>';
-            }
-            $has_subs = $DB->record_exists('local_ref_marketer_profile', ['parent_userid' => $m->userid]);
-            if (!$has_subs) {
-                $type_btn = '
-                <form method="post" action="' . $base_out . '" style="margin-top:4px;display:flex;gap:4px;">
-                    <input type="hidden" name="action"     value="settype">
-                    <input type="hidden" name="marketerid" value="' . $m->userid . '">
-                    <input type="hidden" name="newtype"    value="sub">
-                    <input type="hidden" name="sesskey"    value="' . $sess . '">
-                    <select name="parentid" class="ref-input" style="padding:4px 7px;font-size:.72rem;min-width:110px;">' . $opts . '</select>
-                    <button type="submit" class="ref-btn btn-o" style="font-size:.7rem;padding:4px 9px;"
-                        onclick="return this.form.parentid.value > 0 || (alert(\'اختر مسوقاً رئيسياً\'),false)">
-                        ↓ فرعي
-                    </button>
-                </form>';
-            } else {
-                $type_btn = '<span style="font-size:.7rem;color:var(--rm);">لديه فرعيون</span>';
-            }
+        // Parent cell — always visible; saving parent auto-updates type.
+        $pname = (!empty($m->parentfirstname) || !empty($m->parentlastname))
+            ? htmlspecialchars(trim(($m->parentfirstname ?? '') . ' ' . ($m->parentlastname ?? '')))
+              . ' <span class="rb rb-gray" style="font-size:.68rem;">(' . htmlspecialchars($m->parentcode ?? '') . ')</span>'
+            : '<span style="color:var(--rm);font-size:.78rem;">—</span>';
+
+        $options = '<option value="0"' . (empty($m->parent_userid) ? ' selected' : '') . '>— بدون أب —</option>';
+        foreach ($all_marketers as $pm) {
+            if ($pm->userid == $m->userid) continue;
+            $sel = (!empty($m->parent_userid) && $m->parent_userid == $pm->userid) ? ' selected' : '';
+            $options .= '<option value="' . $pm->userid . '"' . $sel . '>'
+                      . htmlspecialchars(trim($pm->firstname . ' ' . $pm->lastname))
+                      . ' (' . htmlspecialchars($pm->code) . ')</option>';
         }
+
+        $parent_cell = '
+        <td>
+            <div style="margin-bottom:5px;font-size:.82rem;">' . $pname . '</div>
+            <form method="post" action="' . $base_out . '" style="display:flex;gap:4px;">
+                <input type="hidden" name="action"     value="setparent">
+                <input type="hidden" name="marketerid" value="' . $m->userid . '">
+                <input type="hidden" name="sesskey"    value="' . $sess . '">
+                <select name="parentid" class="ref-input" style="padding:4px 7px;font-size:.77rem;min-width:110px;">
+                    ' . $options . '
+                </select>
+                <button type="submit" class="ref-btn btn-p" title="حفظ">&#x2713;</button>
+            </form>
+        </td>';
 
         echo '
         <tr>
@@ -800,14 +719,7 @@ if (empty($marketers)) {
                 <div class="u-email">' . $email . '</div>
             </td>
             <td><span class="rb rb-blue">' . htmlspecialchars($m->code) . '</span></td>
-            <td style="text-align:center;min-width:110px;">
-                ' . $type_badge . $type_btn . '
-            </td>
-            <td>
-                <div class="ref-num">' . $st['referred'] . '</div>
-                <div class="ref-num-lbl">مستخدم</div>
-            </td>
-            <td>' . $comm_form . '</td>
+            <td style="text-align:center;">' . $type_badge . '</td>
             ' . $parent_cell . '
             <td style="font-weight:700;color:var(--rd);">' . number_format($st['total'], 2) . '</td>
             <td>' . $stats_html . '</td>
