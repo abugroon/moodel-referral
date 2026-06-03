@@ -250,6 +250,15 @@ $net_balance        = max(0.0, $withdrawable_total - $pending_withdrawal_total);
 $referred_count     = $DB->count_records('local_ref_users', ['marketerid' => $marketer->userid]);
 $refurl             = (new moodle_url('/', ['ref' => $marketer->code]))->out(false);
 
+// Fetch all visible courses (exclude site course id=1)
+$courses = $DB->get_records_select(
+    'course',
+    'id <> 1 AND visible = 1',
+    [],
+    'fullname ASC',
+    'id, fullname, shortname'
+);
+
 // Parent marketer
 $parent_marketer = null;
 if (!empty($marketer->parent_userid)) {
@@ -534,6 +543,77 @@ $wr_statuses = [
         })">نسخ الرابط</button>
 </div>
 
+<!-- ── Course-specific referral link ── -->
+<div class="mk-card" style="margin-top:18px;">
+    <div class="mk-card-hdr"><h3>رابط إحالة الكورس <span style="font-weight:400;color:var(--m);font-size:.78rem;">/ Course Referral Link</span></h3></div>
+    <div class="mk-card-body">
+        <div style="margin-bottom:14px;">
+            <label for="mkCourseSelect" style="display:block;font-weight:600;color:#1e293b;margin-bottom:6px;font-size:.92rem;">
+                اختر كورساً <span style="font-weight:400;color:var(--m);font-size:.82rem;">/ Select a Course</span>
+            </label>
+            <select id="mkCourseSelect"
+                style="width:100%;padding:10px 14px;border:1.5px solid #e2e8f0;border-radius:8px;
+                       font-size:.95rem;color:#1e293b;background:#fff;cursor:pointer;outline:none;">
+                <option value="">-- اختر الكورس / Choose a course --</option>
+                <?php foreach ($courses as $course): ?>
+                <option value="<?php echo (int)$course->id; ?>"
+                        data-name="<?php echo s($course->fullname); ?>"
+                        data-url="<?php echo s((new moodle_url('/course/view.php', ['id' => $course->id, 'ref' => $marketer->code]))->out(false)); ?>">
+                    <?php echo s($course->fullname); ?>
+                </option>
+                <?php endforeach; ?>
+            </select>
+        </div>
+
+        <div id="mkCourseResult" style="display:none;background:#f8fafc;border:1.5px solid #e2e8f0;
+             border-radius:10px;padding:16px 18px;">
+            <div style="font-size:.82rem;font-weight:600;color:#64748b;text-transform:uppercase;
+                        letter-spacing:.06em;margin-bottom:6px;">الكورس / Course</div>
+            <div id="mkCourseName" style="font-size:1rem;font-weight:700;color:#1e293b;margin-bottom:14px;"></div>
+
+            <div style="font-size:.82rem;font-weight:600;color:#64748b;text-transform:uppercase;
+                        letter-spacing:.06em;margin-bottom:6px;">رابط الإحالة / Referral Link</div>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                <input type="text" id="mkCourseRefIn" readonly
+                    style="flex:1;min-width:0;padding:9px 13px;border:1.5px solid #e2e8f0;border-radius:8px;
+                           font-size:.9rem;color:#1e293b;background:#fff;">
+                <button id="mkCourseCopyBtn"
+                    style="padding:9px 20px;background:#2563eb;color:#fff;border:none;border-radius:8px;
+                           font-weight:600;font-size:.9rem;cursor:pointer;white-space:nowrap;transition:background .2s;"
+                    onmouseover="this.style.background='#1d4ed8'" onmouseout="this.style.background='#2563eb'"
+                    onclick="navigator.clipboard.writeText(document.getElementById('mkCourseRefIn').value).then(()=>{
+                        this.textContent='تم النسخ ✓';
+                        setTimeout(()=>this.textContent='نسخ الرابط',2200);
+                    })">نسخ الرابط</button>
+            </div>
+        </div>
+
+        <?php if (empty($courses)): ?>
+        <div class="mk-empty">
+            <div class="mk-empty-icon">&#x1F4DA;</div>
+            <p>لا توجد كورسات متاحة / No courses available.</p>
+        </div>
+        <?php endif; ?>
+    </div>
+</div>
+
+<script>
+(function(){
+    var sel    = document.getElementById('mkCourseSelect');
+    var result = document.getElementById('mkCourseResult');
+    var nameEl = document.getElementById('mkCourseName');
+    var urlEl  = document.getElementById('mkCourseRefIn');
+    if (!sel) return;
+    sel.addEventListener('change', function(){
+        var opt = sel.options[sel.selectedIndex];
+        if (!opt || !opt.value) { result.style.display = 'none'; return; }
+        nameEl.textContent = opt.getAttribute('data-name');
+        urlEl.value        = opt.getAttribute('data-url');
+        result.style.display = 'block';
+    });
+})();
+</script>
+
 <!-- ── Alert ── -->
 <?php if ($withdrawmsg):
     [$wtype, $wmsg] = explode(':', $withdrawmsg, 2); ?>
@@ -556,6 +636,20 @@ foreach ([
     echo '<div class="mk-stat ' . $cls . '"><div class="st-l">' . $lbl . '</div><div class="st-v">' . $val . '</div></div>';
 }
 ?>
+</div>
+
+<!-- ── Quick links ── -->
+<div style="margin-bottom:18px;">
+    <a href="<?php echo (new moodle_url('/local/referral/mystudents.php'))->out(false); ?>"
+       style="display:inline-flex;align-items:center;gap:8px;background:#2563eb;color:#fff;
+              padding:10px 22px;border-radius:9px;font-weight:700;font-size:.88rem;
+              text-decoration:none;transition:opacity .15s;"
+       onmouseover="this.style.opacity='.85'" onmouseout="this.style.opacity='1'">
+        &#x1F393; طلابي المُحالون / My Referred Students
+        <span style="background:rgba(255,255,255,.25);border-radius:20px;padding:1px 9px;font-size:.75rem;">
+            <?php echo $referred_count; ?>
+        </span>
+    </a>
 </div>
 
 <!-- ── Withdrawal request ── -->
