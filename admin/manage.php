@@ -570,9 +570,9 @@ echo '<div class="ref-wrap">';
 echo '<div class="ref-stats">';
 foreach ([
     ['المسوقون',           $total_marketers,                  ''],
-    ['إجمالي العمولات',   number_format($total_all, 2),      ''],
-    ['معلقة (غير مدفوعة)', number_format($total_approved, 2), 's-amber'],
-    ['مدفوعة',             number_format($total_paid, 2),     's-green'],
+    ['إجمالي العمولات',   fmt_sdg($total_all),      ''],
+    ['معلقة (غير مدفوعة)', fmt_sdg($total_approved), 's-amber'],
+    ['مدفوعة',             fmt_sdg($total_paid),     's-green'],
     ['طلبات سحب معلقة',  $pending_withdrawals_count,        's-red'],
 ] as [$lbl, $val, $cls]) {
     echo "<div class=\"ref-stat {$cls}\"><div class=\"st-lbl\">{$lbl}</div><div class=\"st-val\">{$val}</div></div>";
@@ -595,7 +595,7 @@ echo '
                     <div class="ref-field">
                         <label for="minWd">الحد الأدنى للسحب</label>
                         <input type="number" id="minWd" name="min_withdrawal" class="ref-input"
-                               value="' . number_format($min_withdrawal, 2, '.', '') . '"
+                               value="' . fmt_sdg($min_withdrawal, false) . '"
                                min="0" step="0.01" required>
                         <span class="ref-fhint">أقل مبلغ يمكن للمسوق طلبه</span>
                     </div>
@@ -657,8 +657,8 @@ if (empty($marketers)) {
         $net_owed = max(0.0, $owed - $st['wd_paid']);
         $stats_html = '
         <div class="stat-mini">
-            <div class="sm-row"><span class="sm-lbl">المستحق</span><span class="sm-val sm-pending">'  . number_format($net_owed, 2) . '</span></div>
-            <div class="sm-row"><span class="sm-lbl">مدفوع</span><span class="sm-val sm-paid">'        . number_format($st['paid'], 2) . '</span></div>
+            <div class="sm-row"><span class="sm-lbl">المستحق</span><span class="sm-val sm-pending">'  . fmt_sdg($net_owed) . '</span></div>
+            <div class="sm-row"><span class="sm-lbl">مدفوع</span><span class="sm-val sm-paid">'        . fmt_sdg($st['paid']) . '</span></div>
         </div>';
 
         $pay_btn = '';
@@ -668,8 +668,8 @@ if (empty($marketers)) {
             ]))->out(false);
             $pay_btn = '
             <a href="' . $pay_url . '" class="ref-btn btn-g"
-               onclick="return confirm(\'تسجيل دفع ' . number_format($net_owed, 2) . ' للمسوق ' . addslashes($fullname) . '؟\')">
-                دفع (' . number_format($net_owed, 2) . ')
+               onclick="return confirm(\'تسجيل دفع ' . fmt_sdg($net_owed, false) . ' SDG للمسوق ' . addslashes($fullname) . '؟\')">
+                دفع (' . fmt_sdg($net_owed) . ')
             </a>';
         }
 
@@ -721,7 +721,7 @@ if (empty($marketers)) {
             <td><span class="rb rb-blue">' . htmlspecialchars($m->code) . '</span></td>
             <td style="text-align:center;">' . $type_badge . '</td>
             ' . $parent_cell . '
-            <td style="font-weight:700;color:var(--rd);">' . number_format($st['total'], 2) . '</td>
+            <td style="font-weight:700;color:var(--rd);">' . fmt_sdg($st['total']) . '</td>
             <td>' . $stats_html . '</td>
             <td>
                 <div style="display:flex;flex-wrap:wrap;gap:5px;justify-content:center;">
@@ -777,12 +777,12 @@ if (empty($pending_withdrawals)) {
         <tr>
             <td style="font-weight:700;color:var(--rd);">' . $wname . '</td>
             <td><span class="rb rb-blue">' . htmlspecialchars($wr->code) . '</span></td>
-            <td style="font-weight:800;color:var(--rg);">' . number_format($wr->amount, 2) . '</td>
+            <td style="font-weight:800;color:var(--rg);">' . fmt_sdg($wr->amount) . '</td>
             <td style="color:var(--rm);font-size:.8rem;">' . userdate($wr->timecreated, '%d/%m/%Y %H:%M') . '</td>
             <td style="text-align:center;">
                 <div style="display:flex;gap:6px;justify-content:center;">
                     <button type="button" class="ref-btn btn-g"
-                            onclick="openPayModal(' . (int)$wr->id . ',\'' . addslashes($wname) . '\',\'' . number_format($wr->amount, 2) . '\')">
+                            onclick="openPayModal(' . (int)$wr->id . ',\'' . addslashes($wname) . '\',\'' . fmt_sdg($wr->amount, false) . '\')">`
                         قبول الدفع
                     </button>
                     <a href="' . $rej_url . '" class="ref-btn btn-r"
@@ -853,7 +853,7 @@ if (empty($processed_withdrawals)) {
         <tr>
             <td style="font-weight:700;color:var(--rd);">' . $pwname . '</td>
             <td><span class="rb rb-blue">' . htmlspecialchars($pw->code ?? '—') . '</span></td>
-            <td style="font-weight:800;color:var(--rg);">' . number_format((float)$pw->amount, 2) . '</td>
+            <td style="font-weight:800;color:var(--rg);">' . fmt_sdg($pw->amount) . '</td>
             <td><span class="rb ' . $pwcls . '">' . $pwlbl . '</span></td>
             <td style="color:var(--rm);font-size:.8rem;white-space:nowrap;">'
                 . userdate($pw->timecreated, '%d/%m/%Y %H:%M') . '</td>

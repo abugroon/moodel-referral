@@ -209,6 +209,8 @@ echo $OUTPUT->header();
 /* ── Empty ── */
 .ms-empty { text-align:center; padding:48px 20px; color:var(--m); font-size:.9rem; }
 .ms-empty-icon { font-size:2rem; margin-bottom:10px; opacity:.4; }
+
+.cur { font-size:.72em; font-weight:700; color:#94a3b8; letter-spacing:.03em; }
 </style>
 
 <div class="ms">
@@ -234,7 +236,7 @@ echo $OUTPUT->header();
     ?>
     <div class="ms-stat" style="border-left-color:var(--g);">
         <div class="sl">إجمالي العمولات / Total Commissions</div>
-        <div class="sv" style="color:#065f46;"><?php echo number_format($total_comm, 2); ?></div>
+        <div class="sv" style="color:#065f46;"><?php echo fmt_sdg($total_comm); ?></div>
     </div>
     <div class="ms-stat" style="border-left-color:var(--a);">
         <div class="sl">كود الإحالة / Referral Code</div>
@@ -306,7 +308,7 @@ echo $OUTPUT->header();
                     <?php endif; ?>
                 </td>
                 <td style="font-weight:700;color:<?php echo $row->total_comm > 0 ? '#065f46' : 'var(--m)'; ?>;">
-                    <?php echo number_format((float)$row->total_comm, 2); ?>
+                    <?php echo fmt_sdg($row->total_comm); ?>
                 </td>
             </tr>
             <?php endforeach; ?>

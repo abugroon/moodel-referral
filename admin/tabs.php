@@ -48,6 +48,7 @@ function local_referral_admin_tabs(string $active): string {
 @media (max-width: 600px) {
     .ref-tab-link { padding: 7px 12px; font-size: .8rem; }
 }
+.cur { font-size: .72em; font-weight: 700; color: #94a3b8; letter-spacing: .03em; }
     ';
     $html .= '</style>';
 

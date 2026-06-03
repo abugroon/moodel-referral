@@ -221,8 +221,7 @@ echo local_referral_admin_tabs('payments');
                 <div class="card-body">
                     <div class="small fw-bold text-primary text-uppercase mb-1">Total Revenue (Period)</div>
                     <div class="h2 mb-0 fw-bold text-primary">
-                        <?php echo number_format($grand_total, 2); ?>
-                        <span class="fs-6 fw-normal">SDG</span>
+                        <?php echo fmt_sdg($grand_total); ?>
                     </div>
                 </div>
             </div>
@@ -231,7 +230,7 @@ echo local_referral_admin_tabs('payments');
             <div class="card shadow-sm border-0 border-start border-success border-5 h-100 py-2">
                 <div class="card-body">
                     <div class="small fw-bold text-success text-uppercase mb-1">Total Allocated</div>
-                    <div class="h4 mb-0 fw-bold text-success"><?php echo number_format($total_allocated, 2); ?> SDG</div>
+                    <div class="h4 mb-0 fw-bold text-success"><?php echo fmt_sdg($total_allocated); ?></div>
                 </div>
             </div>
         </div>
@@ -239,7 +238,7 @@ echo local_referral_admin_tabs('payments');
             <div class="card shadow-sm border-0 border-start border-warning border-5 h-100 py-2">
                 <div class="card-body">
                     <div class="small fw-bold text-warning text-uppercase mb-1">Total Disbursed</div>
-                    <div class="h4 mb-0 fw-bold text-warning"><?php echo number_format($total_disbursed, 2); ?> SDG</div>
+                    <div class="h4 mb-0 fw-bold text-warning"><?php echo fmt_sdg($total_disbursed); ?></div>
                 </div>
             </div>
         </div>
@@ -247,7 +246,7 @@ echo local_referral_admin_tabs('payments');
             <div class="card shadow-sm border-0 border-start border-danger border-5 h-100 py-2">
                 <div class="card-body">
                     <div class="small fw-bold text-danger text-uppercase mb-1">Total Remaining</div>
-                    <div class="h4 mb-0 fw-bold text-danger"><?php echo number_format($total_remaining, 2); ?> SDG</div>
+                    <div class="h4 mb-0 fw-bold text-danger"><?php echo fmt_sdg($total_remaining); ?></div>
                 </div>
             </div>
         </div>
@@ -276,13 +275,13 @@ echo local_referral_admin_tabs('payments');
                             <td class="ps-4 fw-medium text-dark"><?php echo htmlspecialchars($cat); ?></td>
                             <td><span class="small text-muted fw-bold"><?php echo $d['pct']; ?>%</span></td>
                             <td class="text-end fw-bold text-dark">
-                                <?php echo number_format($d['allocated'], 2); ?>
+                                <?php echo fmt_sdg($d['allocated']); ?>
                             </td>
                             <td class="text-end fw-bold <?php echo $d['disbursed'] > 0 ? 'text-warning' : 'text-muted'; ?>">
-                                <?php echo $d['disbursed'] > 0 ? number_format($d['disbursed'], 2) : '—'; ?>
+                                <?php echo $d['disbursed'] > 0 ? fmt_sdg($d['disbursed']) : '—'; ?>
                             </td>
                             <td class="pe-4 text-end fw-bold <?php echo $d['remaining'] > 0.01 ? 'text-danger' : 'text-success'; ?>">
-                                <?php echo number_format($d['remaining'], 2); ?>
+                                <?php echo fmt_sdg($d['remaining']); ?>
                             </td>
                         </tr>
                     <?php endforeach; ?>
@@ -290,9 +289,9 @@ echo local_referral_admin_tabs('payments');
                     <tfoot class="bg-light border-top border-2">
                         <tr class="fw-bold">
                             <td class="ps-4 py-3" colspan="2">Total</td>
-                            <td class="py-3 text-end text-primary fs-6"><?php echo number_format($total_allocated, 2); ?></td>
-                            <td class="py-3 text-end text-warning fs-6"><?php echo number_format($total_disbursed, 2); ?></td>
-                            <td class="pe-4 py-3 text-end text-danger fs-6"><?php echo number_format($total_remaining, 2); ?></td>
+                            <td class="py-3 text-end text-primary fs-6"><?php echo fmt_sdg($total_allocated); ?></td>
+                            <td class="py-3 text-end text-warning fs-6"><?php echo fmt_sdg($total_disbursed); ?></td>
+                            <td class="pe-4 py-3 text-end text-danger fs-6"><?php echo fmt_sdg($total_remaining); ?></td>
                         </tr>
                     </tfoot>
                 </table>
@@ -346,7 +345,7 @@ echo local_referral_admin_tabs('payments');
                                     <td><span class="badge bg-secondary"><?php echo s($h->category); ?></span></td>
                                     <td><?php echo s($h->recipient_name); ?></td>
                                     <td class="text-end fw-bold text-warning">
-                                        <?php echo number_format((float)$h->amount, 2); ?>
+                                        <?php echo fmt_sdg($h->amount); ?>
                                     </td>
                                     <td class="small text-muted" style="max-width:200px;">
                                         <?php if (!empty($h->notes)): ?>
@@ -401,7 +400,7 @@ echo local_referral_admin_tabs('payments');
                                 <td class="ps-4 py-2" colspan="3">
                                     <span class="text-secondary small text-uppercase"><?php echo s($cat); ?> subtotal</span>
                                 </td>
-                                <td class="py-2 text-end text-warning"><?php echo number_format($cat_total, 2); ?></td>
+                                <td class="py-2 text-end text-warning"><?php echo fmt_sdg($cat_total); ?></td>
                                 <td colspan="3" class="pe-4"></td>
                             </tr>
                         <?php endforeach; ?>
@@ -442,7 +441,7 @@ echo local_referral_admin_tabs('payments');
                             <select name="category" id="disbCategory" class="form-select" required>
                                 <option value="">— Select category —</option>
                                 <?php foreach ($manual_cats as $mc): ?>
-                                    <option value="<?php echo $mc; ?>"><?php echo $mc; ?> (Remaining: <?php echo number_format($remaining_by_category[$mc], 2); ?> SDG)</option>
+                                    <option value="<?php echo $mc; ?>"><?php echo $mc; ?> (Remaining: <?php echo fmt_sdg($remaining_by_category[$mc], false); ?> SDG)</option>
                                 <?php endforeach; ?>
                             </select>
                         </div>

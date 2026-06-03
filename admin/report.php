@@ -147,7 +147,7 @@ echo local_referral_admin_tabs('report');
                     <div class="card-body">
                         <div class="small fw-bold text-primary text-uppercase mb-1">Total Revenue</div>
                         <div class="h4 fw-bold text-primary mb-0">
-                            <?php echo number_format($total_revenue, 2); ?> USD
+                            <?php echo fmt_sdg($total_revenue); ?>
                         </div>
                     </div>
                 </div>
@@ -157,7 +157,7 @@ echo local_referral_admin_tabs('report');
                     <div class="card-body">
                         <div class="small fw-bold text-warning text-uppercase mb-1">Marketer Commissions Paid</div>
                         <div class="h4 fw-bold text-warning mb-0">
-                            <?php echo number_format($total_marketer, 2); ?> USD
+                            <?php echo fmt_sdg($total_marketer); ?>
                         </div>
                     </div>
                 </div>
@@ -167,7 +167,7 @@ echo local_referral_admin_tabs('report');
                     <div class="card-body">
                         <div class="small fw-bold text-info text-uppercase mb-1">Teacher Commissions Paid</div>
                         <div class="h4 fw-bold text-info mb-0">
-                            <?php echo number_format($total_teacher, 2); ?> USD
+                            <?php echo fmt_sdg($total_teacher); ?>
                         </div>
                     </div>
                 </div>
@@ -177,7 +177,7 @@ echo local_referral_admin_tabs('report');
                     <div class="card-body">
                         <div class="small fw-bold text-success text-uppercase mb-1">Net Revenue</div>
                         <div class="h4 fw-bold text-success mb-0">
-                            <?php echo number_format($net_revenue, 2); ?> USD
+                            <?php echo fmt_sdg($net_revenue); ?>
                         </div>
                     </div>
                 </div>
@@ -214,7 +214,7 @@ echo local_referral_admin_tabs('report');
                                     <td><?php echo s($row->firstname . ' ' . $row->lastname); ?></td>
                                     <td class="small"><?php echo s($row->coursename); ?></td>
                                     <td class="text-end fw-bold">
-                                        <?php echo number_format((float)$row->amount, 2); ?>
+                                        <?php echo fmt_sdg($row->amount); ?>
                                     </td>
                                     <td class="small text-muted">
                                         <?php echo s($row->currency); ?>
@@ -233,7 +233,7 @@ echo local_referral_admin_tabs('report');
                                         <?php
                                         $mc = (float)$row->marketer_commission;
                                         echo $mc > 0
-                                            ? '<span class="text-warning fw-bold">' . number_format($mc, 2) . '</span>'
+                                            ? '<span class="text-warning fw-bold">' . fmt_sdg($mc) . '</span>'
                                             : '<span class="text-muted">—</span>';
                                         ?>
                                     </td>
@@ -241,7 +241,7 @@ echo local_referral_admin_tabs('report');
                                         <?php
                                         $tc = (float)$row->teacher_commission;
                                         echo $tc > 0
-                                            ? '<span class="text-info fw-bold">' . number_format($tc, 2) . '</span>'
+                                            ? '<span class="text-info fw-bold">' . fmt_sdg($tc) . '</span>'
                                             : '<span class="text-muted">—</span>';
                                         ?>
                                     </td>
@@ -252,15 +252,15 @@ echo local_referral_admin_tabs('report');
                             <tr class="fw-bold">
                                 <td class="ps-4 py-3" colspan="3">Total (<?php echo count($rows); ?> transactions)</td>
                                 <td class="py-3 text-end text-primary fs-6">
-                                    <?php echo number_format($total_revenue, 2); ?>
+                                    <?php echo fmt_sdg($total_revenue); ?>
                                 </td>
                                 <td colspan="2"></td>
                                 <td class="py-3">—</td>
                                 <td class="py-3 text-end text-warning fs-6">
-                                    <?php echo number_format($total_marketer, 2); ?>
+                                    <?php echo fmt_sdg($total_marketer); ?>
                                 </td>
                                 <td class="pe-4 py-3 text-end text-info fs-6">
-                                    <?php echo number_format($total_teacher, 2); ?>
+                                    <?php echo fmt_sdg($total_teacher); ?>
                                 </td>
                             </tr>
                             <tr class="fw-bold bg-white">
@@ -269,7 +269,7 @@ echo local_referral_admin_tabs('report');
                                 </td>
                                 <td class="py-2 text-end text-success fs-5" colspan="6"
                                     style="border-top:none;">
-                                    <?php echo number_format($net_revenue, 2); ?> USD
+                                    <?php echo fmt_sdg($net_revenue); ?>
                                 </td>
                             </tr>
                             </tfoot>

@@ -150,9 +150,9 @@ echo '<div class="ref-wrap">';
 echo '<div class="ref-stats">';
 foreach ([
     ['انتظار اعتماد',     $cnt_pending  . ' سجل',           ''],
-    ['مجموع انتظار',      number_format($sum_pending, 2),   ''],
-    ['معتمدة / مدفوعة',  $cnt_approved . ' سجل',           's-green'],
-    ['مجموع معتمدة',      number_format($sum_approved, 2),  's-green'],
+    ['مجموع انتظار',      fmt_sdg($sum_pending),   ''],
+    ['معتمدة / مدفوعة',  $cnt_approved . ' سجل',  's-green'],
+    ['مجموع معتمدة',      fmt_sdg($sum_approved),  's-green'],
 ] as [$lbl, $val, $cls]) {
     echo "<div class=\"ref-stat {$cls}\"><div class=\"st-lbl\">{$lbl}</div><div class=\"st-val\">{$val}</div></div>";
 }
@@ -261,8 +261,8 @@ if (empty($commissions)) {
             <td>' . $uname . '</td>
             <td style="color:var(--rm);font-size:.8rem;max-width:180px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"
                 title="' . htmlspecialchars($c->coursename) . '">' . htmlspecialchars($c->coursename) . '</td>
-            <td style="font-weight:700;">' . number_format((float)$c->amount, 2) . '</td>
-            <td style="font-weight:800;color:var(--rg);">' . number_format((float)$c->commission, 2) . '</td>
+            <td style="font-weight:700;">' . fmt_sdg($c->amount) . '</td>
+            <td style="font-weight:800;color:var(--rg);">' . fmt_sdg($c->commission) . '</td>
             <td><span class="rb ' . $sclass . '">' . $slabel . '</span></td>
             <td style="color:var(--rm);font-size:.78rem;white-space:nowrap;">' . userdate($c->timecreated, '%d/%m/%Y') . '</td>
             <td style="text-align:center;">' . $actions . '</td>

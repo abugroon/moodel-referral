@@ -3,6 +3,19 @@
 defined('MOODLE_INTERNAL') || die();
 
 /**
+ * Format a monetary value: strip trailing decimal zeros and append the SDG label.
+ * 1000.00 → "1000 <span class='cur'>SDG</span>"
+ * 1050.50 → "1050.5 <span class='cur'>SDG</span>"
+ */
+function fmt_sdg($val, bool $label = true): string {
+    $formatted = rtrim(rtrim(number_format((float)$val, 2, '.', ','), '0'), '.');
+    if (!$label) {
+        return $formatted;
+    }
+    return $formatted . ' <span class="cur">SDG</span>';
+}
+
+/**
  * Capture ?ref=CODE into a cookie before headers are sent.
  */
 function local_referral_before_http_headers() {

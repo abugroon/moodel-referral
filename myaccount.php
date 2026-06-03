@@ -117,9 +117,9 @@ if ($requestwithdraw && confirm_sesskey()) {
     if ($withdrawamount <= 0) {
         $withdrawmsg = 'error:أدخل مبلغاً صحيحاً.';
     } elseif ($withdrawamount < $min_withdrawal) {
-        $withdrawmsg = 'error:الحد الأدنى للسحب هو ' . number_format($min_withdrawal, 2) . '.';
+        $withdrawmsg = 'error:الحد الأدنى للسحب هو ' . fmt_sdg($min_withdrawal) . '.';
     } elseif ($withdrawamount > $net_avail) {
-        $withdrawmsg = 'error:المبلغ المطلوب أكبر من رصيدك المتاح (' . number_format($net_avail, 2) . ').';
+        $withdrawmsg = 'error:المبلغ المطلوب أكبر من رصيدك المتاح (' . fmt_sdg($net_avail) . ').';
     } else {
         // Route to main marketer if sub, otherwise 0 (admin handles main marketer requests).
         $main_for_wd = ($marketer_type === 'sub' && !empty($marketer->parent_userid))
@@ -140,7 +140,7 @@ if ($requestwithdraw && confirm_sesskey()) {
         // ── Build shared email content ──────────────────────────────────────
         $marketer_name = fullname($USER);
         $date_str      = userdate(time(), '%d/%m/%Y %H:%M');
-        $amount_str    = number_format($withdrawamount, 2);
+        $amount_str    = fmt_sdg($withdrawamount, false) . ' SDG';
         $noreply       = \core_user::get_noreply_user();
 
         // ── 1. Notify main marketer (only when this is a sub-marketer request) ─
@@ -487,6 +487,8 @@ echo $OUTPUT->header();
 .mk-empty { text-align:center; padding:36px 20px; color:var(--m); font-size:.88rem; }
 .mk-empty-icon { font-size:1.8rem; margin-bottom:8px; opacity:.4; }
 
+.cur { font-size:.72em; font-weight:700; color:#94a3b8; letter-spacing:.03em; }
+
 @media(max-width:700px) {
     .mk-stats { grid-template-columns:1fr 1fr; }
     .mk-tbl thead th, .mk-tbl tbody td, .mk-tbl tfoot td { padding:8px 10px; }
@@ -628,10 +630,10 @@ $wr_statuses = [
 <?php
 foreach ([
     ['',    'محوَّلون',         $referred_count,                          ''],
-    ['',    'إجمالي العمولات',  number_format($total_commission, 2),      ''],
-    ['s-g', 'تم دفعها',         number_format($paid_commission, 2),       ''],
-    ['s-g', 'متاح للسحب',       number_format($withdrawable_total, 2),    ''],
-    ['',    'صافي قابل للسحب',  number_format($net_balance, 2),           ''],
+    ['',    'إجمالي العمولات',  fmt_sdg($total_commission),   ''],
+    ['s-g', 'تم دفعها',         fmt_sdg($paid_commission),    ''],
+    ['s-g', 'متاح للسحب',       fmt_sdg($withdrawable_total), ''],
+    ['',    'صافي قابل للسحب',  fmt_sdg($net_balance),        ''],
 ] as [$cls, $lbl, $val, $_]) {
     echo '<div class="mk-stat ' . $cls . '"><div class="st-l">' . $lbl . '</div><div class="st-v">' . $val . '</div></div>';
 }
@@ -672,7 +674,7 @@ foreach ([
             <div class="wd-row">
                 <div class="wd-balance">
                     <div class="wbl">رصيدك المتاح</div>
-                    <div class="wbv"><?php echo number_format($net_balance, 2); ?></div>
+                    <div class="wbv"><?php echo fmt_sdg($net_balance); ?></div>
                 </div>
                 <div class="wd-field">
                     <label for="wdAmt">المبلغ المراد سحبه</label>
@@ -681,7 +683,7 @@ foreach ([
                            max="<?php echo $net_balance; ?>"
                            step="0.01" placeholder="0.00" required
                            <?php echo $net_balance < $min_withdrawal ? 'disabled' : ''; ?>>
-                    <span class="wd-hint">الحد الأدنى: <?php echo number_format($min_withdrawal, 2); ?></span>
+                    <span class="wd-hint">الحد الأدنى: <?php echo fmt_sdg($min_withdrawal); ?></span>
                 </div>
                 <button type="submit" class="btn-wd"
                     <?php echo $net_balance < $min_withdrawal ? 'disabled' : ''; ?>>
@@ -736,8 +738,8 @@ foreach ([
                 <td style="font-weight:600;"><?php echo s($sname); ?></td>
                 <td style="color:var(--m);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
                     title="<?php echo s($cname); ?>"><?php echo s($cname); ?></td>
-                <td style="text-align:left;font-weight:700;"><?php echo number_format((float)$c->amount, 2); ?></td>
-                <td style="text-align:left;font-weight:800;color:var(--g);"><?php echo number_format((float)$c->commission, 2); ?></td>
+                <td style="text-align:left;font-weight:700;"><?php echo fmt_sdg($c->amount); ?></td>
+                <td style="text-align:left;font-weight:800;color:var(--g);"><?php echo fmt_sdg($c->commission); ?></td>
                 <td><span class="sb <?php echo $scls; ?>"><?php echo $slbl; ?></span></td>
             </tr>
         <?php endforeach; ?>
@@ -745,8 +747,8 @@ foreach ([
         <tfoot>
             <tr>
                 <td colspan="3">الإجمالي</td>
-                <td style="text-align:left;"><?php echo number_format($stmt_amount, 2); ?></td>
-                <td style="text-align:left;color:var(--g);"><?php echo number_format($stmt_comm, 2); ?></td>
+                <td style="text-align:left;"><?php echo fmt_sdg($stmt_amount); ?></td>
+                <td style="text-align:left;color:var(--g);"><?php echo fmt_sdg($stmt_comm); ?></td>
                 <td></td>
             </tr>
         </tfoot>
@@ -844,13 +846,13 @@ if ($marketer_type === 'main' && (!empty($sub_pending_wds) || !empty($tc_pending
                                      padding:1px 7px;border-radius:20px;"><?php echo s($swd->code); ?></span>
                         <?php endif; ?>
                     </td>
-                    <td style="text-align:left;font-weight:800;color:#059669;"><?php echo number_format($swd->amount, 2); ?></td>
+                    <td style="text-align:left;font-weight:800;color:#059669;"><?php echo fmt_sdg($swd->amount); ?></td>
                     <td style="color:var(--m);font-size:.78rem;"><?php echo userdate($swd->timecreated, '%d/%m/%Y'); ?></td>
                     <td style="text-align:center;">
                         <div style="display:flex;gap:5px;justify-content:center;">
                             <a href="<?php echo $approve_url->out(false); ?>" class="btn-wd"
                                style="font-size:.75rem;padding:5px 12px;background:#059669;"
-                               onclick="return confirm('الموافقة على سحب <?php echo number_format($swd->amount, 2); ?>؟')">
+                               onclick="return confirm('الموافقة على سحب <?php echo fmt_sdg($swd->amount, false); ?> SDG؟')">
                                 موافقة
                             </a>
                             <a href="<?php echo $reject_url->out(false); ?>" class="btn-wd"
@@ -895,14 +897,14 @@ if ($marketer_type === 'main' && (!empty($sub_pending_wds) || !empty($tc_pending
             ?>
                 <tr>
                     <td style="font-weight:700;"><?php echo s($twname); ?></td>
-                    <td style="text-align:left;font-weight:800;color:#059669;"><?php echo number_format($twd->amount, 2); ?></td>
+                    <td style="text-align:left;font-weight:800;color:#059669;"><?php echo fmt_sdg($twd->amount); ?></td>
                     <td style="font-size:.78rem;color:var(--m);"><?php echo s($twd->currency); ?></td>
                     <td style="color:var(--m);font-size:.78rem;"><?php echo userdate($twd->timecreated, '%d/%m/%Y'); ?></td>
                     <td style="text-align:center;">
                         <div style="display:flex;gap:5px;justify-content:center;">
                             <a href="<?php echo $tapprove_url->out(false); ?>" class="btn-wd"
                                style="font-size:.75rem;padding:5px 12px;background:#059669;"
-                               onclick="return confirm('الموافقة على سحب المعلم <?php echo number_format($twd->amount, 2); ?>؟')">
+                               onclick="return confirm('الموافقة على سحب المعلم <?php echo fmt_sdg($twd->amount, false); ?> SDG؟')">
                                 موافقة
                             </a>
                             <a href="<?php echo $treject_url->out(false); ?>" class="btn-wd"
@@ -954,7 +956,7 @@ if ($marketer_type === 'main' && (!empty($sub_pending_wds) || !empty($tc_pending
                 </td>
                 <td style="text-align:center;font-weight:700;"><?php echo (int)$sm->commission_percentage; ?>%</td>
                 <td style="text-align:center;font-weight:800;color:var(--p);font-size:1.05rem;"><?php echo $sst['referred']; ?></td>
-                <td style="text-align:left;font-weight:800;color:var(--g);"><?php echo number_format($sst['total'], 2); ?></td>
+                <td style="text-align:left;font-weight:800;color:var(--g);"><?php echo fmt_sdg($sst['total']); ?></td>
             </tr>
         <?php endforeach; ?>
         </tbody>
@@ -1000,7 +1002,7 @@ if ($marketer_type === 'main' && (!empty($sub_pending_wds) || !empty($tc_pending
         ?>
             <tr>
                 <td style="color:var(--m);white-space:nowrap;"><?php echo userdate($wr->timecreated, '%d/%m/%Y'); ?></td>
-                <td style="text-align:left;font-weight:800;color:#065f46;font-size:.95rem;"><?php echo number_format($wr->amount, 2); ?></td>
+                <td style="text-align:left;font-weight:800;color:#065f46;font-size:.95rem;"><?php echo fmt_sdg($wr->amount); ?></td>
                 <td><span class="sb <?php echo $wrcls; ?>"><?php echo $wrlbl; ?></span></td>
                 <td><?php echo $receipt_link; ?></td>
             </tr>
